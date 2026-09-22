@@ -1,0 +1,122 @@
+[
+  {
+    "id": "deepseek_mla_compression_method",
+    "question": "DeepSeek-V2의 MLA는 추론 시 KV Cache 병목을 줄이기 위해 어떤 압축 방식을 사용하는가?",
+    "expected_chunk_id": "deepseek_v2_mla-p6-text-0",
+    "expected_source": "deepseek_v2_mla.pdf",
+    "doc_types": ["technical_paper"],
+    "technology": "DeepSeek-V2 MLA"
+  },
+  {
+    "id": "deepseek_kv_cache_reduction",
+    "question": "DeepSeek-V2는 DeepSeek 67B와 비교해 KV Cache를 얼마나 줄였다고 보고하는가?",
+    "expected_chunk_id": "deepseek_v2_mla-p4-text-2",
+    "expected_source": "deepseek_v2_mla.pdf",
+    "doc_types": ["technical_paper"],
+    "technology": "DeepSeek-V2 MLA"
+  },
+  {
+    "id": "deepseek_generation_throughput",
+    "question": "DeepSeek-V2 논문은 최대 생성 처리량이 기존 DeepSeek 67B 대비 몇 배 향상됐다고 제시하는가?",
+    "expected_chunk_id": "deepseek_v2_mla-p4-text-2",
+    "expected_source": "deepseek_v2_mla.pdf",
+    "doc_types": ["technical_paper"],
+    "technology": "DeepSeek-V2 MLA"
+  },
+  {
+    "id": "deepseek_model_context_length",
+    "question": "공식 구현 문서에서 DeepSeek-V2와 DeepSeek-V2-Lite의 컨텍스트 길이는 각각 얼마인가?",
+    "expected_chunk_id": "deepseek_v2_readme-pdocument-text-3",
+    "expected_source": "deepseek_v2_readme.md",
+    "doc_types": ["implementation_document"],
+    "technology": "DeepSeek-V2 MLA"
+  },
+  {
+    "id": "deepseek_device_map_constraint",
+    "question": "DeepSeek-V2 공식 Text Completion 예제에서 모델 로딩 시 auto로 설정하면 안 되는 옵션은 무엇인가?",
+    "expected_chunk_id": "deepseek_v2_readme-pdocument-text-11",
+    "expected_source": "deepseek_v2_readme.md",
+    "doc_types": ["implementation_document"],
+    "technology": "DeepSeek-V2 MLA"
+  },
+  {
+    "id": "infinigen_kv_pool_location",
+    "question": "InfiniGen은 긴 콘텐츠 생성에서 GPU 메모리 제약을 완화하기 위해 KV Cache pool을 어디에 유지하는가?",
+    "expected_chunk_id": "infinigen-p1-text-2",
+    "expected_source": "infinigen.pdf",
+    "doc_types": ["technical_paper"],
+    "technology": "InfiniGen"
+  },
+  {
+    "id": "infinigen_offloading_performance",
+    "question": "InfiniGen은 기존 KV Cache 관리 방식과 비교해 최대 몇 배 빠른 성능을 보고하는가?",
+    "expected_chunk_id": "infinigen-p2-text-1",
+    "expected_source": "infinigen.pdf",
+    "doc_types": ["technical_paper"],
+    "technology": "InfiniGen"
+  },
+  {
+    "id": "infinigen_transfer_bottleneck",
+    "question": "CPU로 KV Cache를 오프로딩하는 추론 시스템에서 전송 병목이 되는 하드웨어 연결은 무엇인가?",
+    "expected_chunk_id": "infinigen-p4-text-0",
+    "expected_source": "infinigen.pdf",
+    "doc_types": ["technical_paper"],
+    "technology": "InfiniGen"
+  },
+  {
+    "id": "infinigen_repository_experiments",
+    "question": "InfiniGen 공식 구현 저장소는 정확도와 속도 향상 평가를 각각 어느 디렉터리에서 제공한다고 안내하는가?",
+    "expected_chunk_id": "infinigen_readme-pdocument-text-0",
+    "expected_source": "infinigen_readme.md",
+    "doc_types": ["implementation_document"],
+    "technology": "InfiniGen"
+  },
+  {
+    "id": "longbench_task_composition",
+    "question": "LongBench는 몇 개의 주요 과제 범주와 몇 개의 개별 과제로 구성되는가?",
+    "expected_chunk_id": "longbench-p1-text-2",
+    "expected_source": "longbench.pdf",
+    "doc_types": ["domain_benchmark"],
+    "technology": null
+  },
+  {
+    "id": "longbench_perplexity_limitation",
+    "question": "LongBench 논문은 장문맥 평가에서 perplexity 지표의 어떤 한계를 지적하는가?",
+    "expected_chunk_id": "longbench-p2-text-1",
+    "expected_source": "longbench.pdf",
+    "doc_types": ["domain_benchmark"],
+    "technology": null
+  },
+  {
+    "id": "ruler_synthetic_control",
+    "question": "RULER는 컨텍스트 길이와 과제 복잡도를 어떻게 조절할 수 있다고 설명하는가?",
+    "expected_chunk_id": "ruler-p2-table_caption-0",
+    "expected_source": "ruler.pdf",
+    "doc_types": ["domain_benchmark"],
+    "technology": null
+  },
+  {
+    "id": "ruler_niah_criteria",
+    "question": "RULER의 NIAH 과제에서 검색 능력은 어떤 세 가지 기준을 충족해야 하는가?",
+    "expected_chunk_id": "ruler-p4-table_caption-0",
+    "expected_source": "ruler.pdf",
+    "doc_types": ["domain_benchmark"],
+    "technology": null
+  },
+  {
+    "id": "gemini_context_window_comparison",
+    "question": "Gemini 긴 컨텍스트 문서는 이전 생성 모델과 Gemini의 최대 입력 토큰 길이를 어떻게 비교하는가?",
+    "expected_chunk_id": "gemini_long_context-pdocument-text-1",
+    "expected_source": "gemini_long_context.html",
+    "doc_types": ["market_document"],
+    "technology": null
+  },
+  {
+    "id": "gemini_long_context_limitations",
+    "question": "Gemini 긴 컨텍스트 문서는 여러 정보를 찾아야 하는 상황에서 정확도와 비용 측면의 어떤 trade-off를 설명하는가?",
+    "expected_chunk_id": "gemini_long_context-pdocument-text-4",
+    "expected_source": "gemini_long_context.html",
+    "doc_types": ["market_document"],
+    "technology": null
+  }
+]
