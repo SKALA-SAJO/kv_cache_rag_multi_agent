@@ -1,4 +1,4 @@
-"""Gold 질문셋으로 Hybrid Retriever의 Hit@K와 MRR을 계산한다.
+"""분리된 질문셋으로 Hybrid Retriever의 Hit@K와 MRR을 계산한다.
 
 실행 전 ``uv run python -m rag.ingest``로 현재 코퍼스와 일치하는 FAISS 색인을 만든다.
 """
@@ -14,7 +14,10 @@ from rag.retriever import retrieve
 
 
 ROOT = Path(__file__).resolve().parents[1]
-GOLDEN_PATH = ROOT / "data" / "eval" / "golden_questions.json"
+DATASET_PATHS = {
+    "smoke": ROOT / "data" / "eval" / "smoke_questions.json",
+    "heldout": ROOT / "data" / "eval" / "heldout_questions.json",
+}
 
 
 def _rank_of_expected_chunk(documents: list[Any], expected_chunk_id: str) -> int | None:
@@ -24,8 +27,20 @@ def _rank_of_expected_chunk(documents: list[Any], expected_chunk_id: str) -> int
     return None
 
 
-def evaluate(top_k: int) -> dict[str, float]:
-    records = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+def _load_records(dataset: str) -> list[dict[str, Any]]:
+    path = DATASET_PATHS[dataset]
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path}가 없습니다. data/eval/HELDOUT_GUIDE.md를 따라 질문셋을 먼저 작성하세요."
+        )
+    records = json.loads(path.read_text(encoding="utf-8"))
+    if not records:
+        raise ValueError(f"{path}에 평가 질문이 없습니다.")
+    return records
+
+
+def evaluate(top_k: int, dataset: str) -> dict[str, float]:
+    records = _load_records(dataset)
     ranks: list[int | None] = []
 
     for record in records:
@@ -53,10 +68,16 @@ def evaluate(top_k: int) -> dict[str, float]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Gold 질문셋 기반 Retriever 평가")
     parser.add_argument("--top-k", type=int, default=5, choices=range(1, 21))
+    parser.add_argument(
+        "--dataset",
+        choices=DATASET_PATHS,
+        required=True,
+        help="smoke는 파이프라인 점검용, heldout은 성능 평가용입니다.",
+    )
     args = parser.parse_args()
 
-    metrics = evaluate(args.top_k)
-    print("\n=== Retrieval evaluation ===")
+    metrics = evaluate(args.top_k, args.dataset)
+    print(f"\n=== Retrieval evaluation ({args.dataset}) ===")
     for name, score in metrics.items():
         print(f"{name}: {score:.3f}")
 

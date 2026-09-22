@@ -23,11 +23,24 @@ RUN_LIVE_TESTS=1 uv run python -m unittest tests.test_integration_live -v
 
 ## Retrieval 평가 (Hit@K / MRR)
 
-`data/eval/golden_questions.json`에는 질문과 기대 청크 ID를 함께 저장한다. 색인을 만든 뒤
-아래 명령으로 Hybrid Retrieval의 Hit@1, Hit@3, Hit@5, MRR을 계산한다.
+평가 질문셋은 역할에 따라 분리한다.
+
+- `data/eval/smoke_questions.json`: 검색 순위를 확인하며 정리한 점검용 질문셋이다. 구현이
+  깨지지 않았는지를 확인하는 회귀 테스트에만 사용한다.
+- `data/eval/heldout_questions.json`: 검색 결과를 보기 전에 원문 근거부터 지정한 성능 평가용
+  질문셋이다. 작성 방법은 `data/eval/HELDOUT_GUIDE.md`를 따른다.
+
+색인을 만든 뒤 아래 명령으로 점검용 질문셋의 Hit@1, Hit@3, Hit@5, MRR을 계산한다.
 
 ```bash
-uv run python -m tests.evaluate_retrieval
+uv run python -m tests.evaluate_retrieval --dataset smoke
 ```
 
-평가 결과는 모델·청킹·코퍼스가 바뀔 때마다 기록해 이전 결과와 비교한다.
+Held-out 질문셋을 작성한 뒤에는 아래 명령으로 성능 지표를 측정한다.
+
+```bash
+uv run python -m tests.evaluate_retrieval --dataset heldout
+```
+
+모델·청킹·코퍼스가 바뀔 때마다 두 결과를 기록한다. 보고서의 검색 성능 지표에는 held-out 결과만
+사용한다.

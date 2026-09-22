@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-GOLDEN_PATH = ROOT / "data" / "eval" / "golden_questions.json"
+SMOKE_PATH = ROOT / "data" / "eval" / "smoke_questions.json"
 REQUIRED_KEYS = {
     "id",
     "question",
@@ -20,8 +20,8 @@ REQUIRED_KEYS = {
 
 
 class EvaluationDatasetTests(unittest.TestCase):
-    def test_golden_questions_have_required_retrieval_fields(self) -> None:
-        records = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+    def test_smoke_questions_have_required_retrieval_fields(self) -> None:
+        records = json.loads(SMOKE_PATH.read_text(encoding="utf-8"))
 
         self.assertGreaterEqual(len(records), 5)
         self.assertEqual(len({record["id"] for record in records}), len(records))
