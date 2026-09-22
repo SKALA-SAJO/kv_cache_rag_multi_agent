@@ -20,6 +20,13 @@ import urllib.request
 RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 MANIFEST_PATH = RAW_DIR / "corpus_manifest.json"
 
+PAPERS = {
+    "deepseek_v2_mla.pdf": "https://arxiv.org/pdf/2405.04434",
+    "infinigen.pdf": "https://arxiv.org/pdf/2406.19707",
+    # Domain corpus (sample.pdf 'RAG 문서 구성')
+    "longbench.pdf": "https://aclanthology.org/2024.acl-long.172.pdf",
+    "ruler.pdf": "https://arxiv.org/pdf/2404.06654",
+}
 
 @dataclass(frozen=True)
 class CorpusSource:
@@ -116,7 +123,9 @@ def _download(source: CorpusSource, destination: Path) -> None:
 def _write_manifest() -> None:
     """수집 목록과 URL을 별도 파일에 남겨 ingest와 보고서 출처 추적에 사용한다."""
     payload = {"sources": [asdict(source) for source in CORPUS_SOURCES]}
-    MANIFEST_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    MANIFEST_PATH.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def download() -> None:
