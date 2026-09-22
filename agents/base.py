@@ -100,6 +100,38 @@ def documents_to_evidence_items(
     return items
 
 
+def search_results_to_evidence_items(
+    results: list[dict],
+    agent: str,
+    claim: str,
+    quote_length: int = 300,
+) -> list[dict]:
+    """외부 검색 도구 결과를 evidence_items(State: evidence_items) 형태로 변환한다.
+
+    documents_to_evidence_items의 외부 검색(source_type="external_search") 버전.
+    어떤 검색 API를 쓰든(Tavily/Google 등) rag/external_search.py가 결과를
+    {"title": str, "url": str, "content": str} 형태로 정규화해서 넘긴다고 가정한다 —
+    이 함수 자체는 특정 API에 의존하지 않는다. 실제로 검색한 결과에서만 만들어지므로
+    근거를 지어내지 않는다 (documents_to_evidence_items와 동일한 원칙).
+    """
+    items = []
+    for r in results:
+        content = r.get("content") or r.get("snippet") or ""
+        items.append(
+            {
+                "claim": claim,
+                "evidence_quote": content[:quote_length],
+                "source_url": r.get("url"),
+                "document_id": None,
+                "page_or_section": None,
+                "source_type": "external_search",
+                "limitation": "",
+                "agent": agent,
+            }
+        )
+    return items
+
+
 def format_evidence_items(evidence_items: list[dict]) -> str:
     """검증 Agent가 참조할 수 있도록 evidence_items를 번호 붙은 컨텍스트 문자열로 변환한다."""
     if not evidence_items:
