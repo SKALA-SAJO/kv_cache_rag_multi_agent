@@ -65,11 +65,24 @@ def _latest_report() -> Path:
     return reports[-1]
 
 
+# 나눔고딕에 글리프가 없어 빈 박스로 나오는 특수문자를 LLM이 종종 섞어 쓴다 — 일반
+# ASCII 문자로 정규화한다 (U+2011 논브레이킹 하이픈 등).
+_GLYPH_FALLBACKS = {
+    "‑": "-",  # non-breaking hyphen
+}
+
+
+def _normalize_text(text: str) -> str:
+    for char, replacement in _GLYPH_FALLBACKS.items():
+        text = text.replace(char, replacement)
+    return text
+
+
 def convert(input_path: Path, output_path: Path) -> None:
     if not FONT_DIR.exists():
         raise SystemExit(f"{FONT_DIR} 가 없습니다 — 나눔고딕 폰트를 assets/fonts/에 받아두세요.")
 
-    markdown_text = input_path.read_text(encoding="utf-8")
+    markdown_text = _normalize_text(input_path.read_text(encoding="utf-8"))
     body_html = markdown.markdown(markdown_text, extensions=["tables", "fenced_code", "nl2br"])
     html = _HTML_TEMPLATE.format(
         regular_font=(FONT_DIR / "NanumGothic-Regular.ttf").as_uri(),
