@@ -51,14 +51,44 @@ REFERENCE
 
 ## 작성 규칙
 - 3장(Multi-Agent RAG 설계)과 6장(한계)은 입력으로 제공되는 실행 메타데이터(사용된 Agent, 검증
-  결과, retry 횟수, RAG 적용 범위)를 사실대로 반영한다. 특히 v0.0에서는 시장성·이해관계자 평가에
-  전용 RAG 코퍼스가 없었다는 한계를 6.1에 반드시 명시한다.
-- 4장은 각 관점 Agent가 반환한 score/rationale/evidence/limitations/confidence를 표/서술로
-  정리한다. insufficient_evidence=true인 항목은 점수 대신 "정보 부족"으로 표기한다.
+  결과, retry 횟수, RAG 적용 범위)를 사실대로 반영한다. 현재 시장성·이해관계자 평가는 RAG(시장
+  자료 코퍼스)와 외부 검색 도구를 함께 쓰지만, 외부 검색 API가 팀 합의로 아직 등록되지 않아
+  실제 검색은 수행되지 않는다는 한계를 6.1에 반드시 명시한다.
+- 4장은 각 관점 Agent가 반환한 필드를 표/서술로 정리한다. **TRL(기술 성숙도)만 1~9 숫자
+  score**를 쓰고, 시장성·이해관계자·도메인 적합성은 **level**("근거 부족"/"근거 제한적"/
+  "근거 충분") 3단계 라벨을 쓴다 — 이 둘을 같은 척도인 것처럼 섞어 쓰지 않는다.
+  insufficient_evidence=true인 항목은 score/level 대신 "정보 부족"으로 표기한다.
 - 5장은 synthesis의 agreements/conflicts/favorable_conditions를 그대로 반영하되, 특정 기술을
   최종 승자로 선언하는 문장을 쓰지 않는다.
 - faithfulness_check에서 status="fail"로 판정된 claim은 본문에 포함하지 않거나, 포함할 경우
   "근거 부족으로 검증되지 않음"이라고 명시한다.
-- REFERENCE 절은 references 목록(문서명·페이지)과, 알려진 원문 출처(DeepSeek-V2 arXiv:2405.04434,
-  InfiniGen arXiv:2406.19707, BGE-M3 모델 카드)를 함께 정리한다.
 - 순수 Markdown으로만 출력한다 (코드 블록으로 감싸지 않는다).
+
+## Markdown 헤딩 레벨 규칙
+목차의 번호 체계와 렌더링된 헤딩 레벨이 항상 일치해야 한다 — 같은 자릿수의 항목은 예외 없이
+전부 같은 헤딩 레벨을 쓴다.
+- `1.`, `2.`, ..., `6.`, `SUMMARY`, `REFERENCE` (최상위 장) -> `##`
+- `1.1`, `4.2`, `5.3` 같은 하위 절 -> `###`
+- 5장처럼 하위 절이 여러 개(5.1~5.4)여도 **전부 빠짐없이** `###`를 붙인다. 앞 절은 헤딩으로 쓰고
+  뒤이어 나오는 절은 굵은 글씨나 일반 문단으로 바꿔 쓰는 식의 불일치를 만들지 않는다.
+
+## REFERENCE 표기 형식
+REFERENCE 절의 각 항목은 아래 세 유형 중 하나로 분류해 작성한다. 이 프로젝트 코퍼스에 없는
+유형(예: 특허)은 해당 항목이 없으면 그 카테고리 자체를 생략한다.
+
+- 특허 : `출원인(YYYY-MM). 특허명, 특허번호/공개번호, URL`
+- 논문 : `저자(YYYY). 논문제목. 학술지/학회명, 권(호), 페이지.`
+- 기타 (웹페이지) : `기관명 또는 작성자(YYYY-MM-DD). 제목. 사이트명, URL`
+
+예시:
+- 논문 : DeepSeek-AI (2024). DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts
+  Language Model. arXiv:2405.04434.
+- 논문 : Lee, W. et al. (2024). InfiniGen: Efficient Generative Inference of Large Language
+  Models with Dynamic KV Cache Management. USENIX OSDI 2024, arXiv:2406.19707.
+- 기타 : DeepSeek-AI (2024). DeepSeek-V2 GitHub Repository. GitHub, https://github.com/deepseek-ai/DeepSeek-V2
+- 기타 : Google (2026). Long context. Gemini API Docs, https://ai.google.dev/gemini-api/docs/long-context
+- 기타 : BAAI (2024). BGE-M3 모델 카드. Hugging Face, https://huggingface.co/BAAI/bge-m3
+
+파일명(예: "(deepseek_v2_mla.pdf)")을 그대로 나열하지 않는다 — references에 담긴 source/URL을
+근거로 실제 저자·연도·제목을 채워 위 형식에 맞춰 다시 쓴다. 정확한 연도·저자를 알 수 없는 항목은
+"기타" 유형으로 두고 알 수 있는 정보(기관명·제목·URL)만 채운다.
