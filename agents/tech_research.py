@@ -19,6 +19,7 @@ from agents.base import (
 from agents.schemas import TechEvidence
 from graph.state import GraphState
 from rag.retriever import retrieve
+from scripts.download_papers import DOC_TYPE_IMPLEMENTATION, DOC_TYPE_TECHNICAL_PAPER
 
 SYSTEM_PROMPT = load_prompt("tech_research")
 AGENT_NAME = "tech_research"
@@ -79,8 +80,18 @@ def _retrieve_corpora(
         paper_query = f"{paper_query} {retry_hint}"
         implementation_query = f"{implementation_query} {retry_hint}"
 
-    paper_candidates = retrieve(paper_query)
-    implementation_candidates = retrieve(implementation_query)
+    # PDF B.3/D.1의 문서군 분리를 retriever 단계에서 강제한다. 쿼리 문구만으로
+    # 분리하면 다른 기술의 논문·README나 LongBench/RULER·시장 문서가 섞일 수 있다.
+    paper_candidates = retrieve(
+        paper_query,
+        doc_types=DOC_TYPE_TECHNICAL_PAPER,
+        technology=tech_name,
+    )
+    implementation_candidates = retrieve(
+        implementation_query,
+        doc_types=DOC_TYPE_IMPLEMENTATION,
+        technology=tech_name,
+    )
     paper_docs = _deduplicate_documents(
         [doc for doc in paper_candidates if not _is_implementation_document(doc)]
     )
