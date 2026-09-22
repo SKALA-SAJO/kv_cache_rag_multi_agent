@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     openai_api_key: str = ""
+    tavily_api_key: str = ""
 
     generator_model: str = "gpt-4.1-mini"
     judge_model: str = "gpt-4.1-mini"
@@ -32,6 +33,10 @@ class Settings(BaseSettings):
     retrieval_top_k_final: int = 6
 
     max_verification_retries: int = 2
+
+    # 외부 정보 검색 도구 (시장/이해관계자 평가 Agent, agents/base.py의
+    # register_external_search_tool 계약을 만족하는 rag/external_search.py에서 사용)
+    external_search_max_results: int = 5
 
     vectorstore_dir: str = "vectorstore"
     chunks_path: str = "data/processed/chunks.jsonl"
