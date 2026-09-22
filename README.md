@@ -37,16 +37,17 @@
 - 검증 Agent(Faithfulness Check)가 종합 결과의 claim을 근거(evidence_items)와 대조하고, 실패한
   claim의 **출처 Agent만 표적 재실행**(전체 재시작이 아님, 최대 `MAX_VERIFICATION_RETRIES`회)
 - 최종 Markdown 평가 보고서 자동 생성 및 `outputs/`에 저장
-- `tests/`에 네트워크·API 호출 없이 도는 재현 가능한 자동 테스트 스위트, 검색 품질(Hit@K, MRR)
-  평가 스크립트 포함
+- `tests/`에 네트워크·API 호출 없이 도는 재현 가능한 자동 테스트 스위트, Retrieval 품질(Hit@K,
+  MRR) 평가, Generation 품질(Faithfulness, Answer Relevance) 평가 스크립트 포함
 
 
 ## Tech Stack
 - Framework : LangGraph
 - LLM/Generator : OpenAI GPT (`GENERATOR_MODEL`, 기본값 `gpt-5-mini`)
 - LLM/Judge : OpenAI GPT (`JUDGE_MODEL`, Faithfulness Check 전용, 기본값 `gpt-5-mini`)
-- Retrieval : FAISS(Dense) + BM25(Sparse) Hybrid Retrieval(RRF 결합, Top-20~30) →
-  BAAI/bge-reranker-v2-m3 Cross-encoder 재정렬(Top-5~8). `doc_type`/`technology` 필터링 지원
+- Retrieval : FAISS(Dense) + BM25(Sparse) Hybrid Retrieval(RRF 결합, Top-20-30) →
+  BAAI/bge-reranker-v2-m3 Cross-encoder 재정렬(Top-5-8). `doc_type`/`technology` 필터링 지원
+  - Held-out 15문항 평가: **Hit Rate@1 0.533, Hit Rate@3 0.867, Hit Rate@5 0.867, MRR 0.678**
 - Embedding : BAAI/bge-m3 (다국어·긴 입력·Dense/Sparse 지원). 기본 연산 장치는 `cpu`(팀
   전체 호환), Apple Silicon 사용자는 `EMBEDDING_DEVICE=mps`로 개인 설정 시 GPU 사용 가능
   (아래 [MPS(Apple Silicon GPU) 사용](#mpsapple-silicon-gpu-사용) 참고)
@@ -69,7 +70,7 @@
 | Agent | 역할 | RAG | 외부 검색 | 입력 | 출력 |
 |---|---|:---:|:---:|---|---|
 | 기술 조사 Agent | 기술 원리·성능·한계 추출 | O (기술원문+구현자료) | - | 기술 논문 | `technical_evidence` |
-| 기술 성숙도 평가 Agent | 공개 근거 기반 TRL(1~9) 추정 | O (기술원문+구현자료) | - | `technical_evidence` | `trl_evaluation` |
+| 기술 성숙도 평가 Agent | 공개 근거 기반 TRL(1-9) 추정 | O (기술원문+구현자료) | - | `technical_evidence` | `trl_evaluation` |
 | 시장 평가 Agent | 시장 수요·상용화·생태계 조사 | O (시장자료) | O (Tavily) | `technical_evidence` | `market_evaluation` |
 | 이해관계자 평가 Agent | 관계자별 이점·우려 분석 | X | O (Tavily) | `technical_evidence` | `stakeholder_evaluation` |
 | 도메인 평가 Agent | 장문맥 처리 환경 적합성 평가 | O (기술원문+도메인자료) | - | `technical_evidence` | `domain_evaluation` |
@@ -77,7 +78,7 @@
 | 검증 Agent (Faithfulness Check) | claim-evidence 일치 대조, 근거 부족 탐지, 재시도 대상 Agent 판정 | X | - | `synthesis`, `evidence_items` | `faithfulness_check` |
 | 보고서 생성 Agent | 결과를 보고서 형식으로 구성 | X | - | 종합·검증 결과, `references` | `final_report` |
 
-TRL은 1~9 숫자 척도, 시장성·이해관계자·도메인 적합성은 "근거 부족 / 근거 제한적 / 근거 충분"
+TRL은 1-9 숫자 척도, 시장성·이해관계자·도메인 적합성은 "근거 부족 / 근거 제한적 / 근거 충분"
 3단계 라벨을 쓴다(서로 다른 척도라 섞어 쓰지 않음). `TAVILY_API_KEY`가 없으면 외부 검색 도구가
 등록되지 않아 해당 Agent는 검색 없이 정직하게 "정보 부족"으로 처리한다.
 
@@ -136,8 +137,7 @@ flowchart TD
 ├── data/
 │   ├── raw/                 # 원문(PDF/README/HTML) (scripts/download_papers.py로 생성, git 미포함)
 │   ├── processed/           # BM25 검색용 청크 jsonl (rag/ingest.py로 생성, git 미포함)
-│   └── eval/
-│       └── golden_questions.json   # 검색 품질 평가용 gold 질문셋
+│   └── eval/                # Retrieval/Generation 평가용 질문셋 (상세: tests/README.md)
 ├── vectorstore/              # FAISS 색인 저장 디렉터리 (git 미포함)
 ├── agents/                   # Agent 모듈 (8개)
 │   ├── base.py                 # LLM 호출·프롬프트 로딩·외부 검색 tool-calling 루프·evidence 변환
@@ -162,8 +162,7 @@ flowchart TD
 ├── scripts/
 │   ├── download_papers.py    # 코퍼스 4종 다운로드 (CORPUS_SOURCES 단일 출처)
 │   └── report_to_pdf.py      # report_*.md -> 제출용 RAG-Output PDF 변환
-├── tests/                    # 재현 가능한 자동 테스트 (unittest, API 호출 없음)
-│   └── evaluate_retrieval.py    # Hit@K, MRR 평가 (data/eval/golden_questions.json 사용)
+├── tests/                    # 재현 가능한 자동 테스트 + Retrieval/Generation 평가 (상세: tests/README.md)
 ├── assets/fonts/              # PDF 변환용 나눔고딕(OFL 라이선스) — git 포함
 ├── outputs/                   # 평가 결과(최종 보고서 .md, 제출용 .pdf) 저장 (git 미포함)
 ├── technologies.py            # 비교 대상 기술 메타데이터 (Human 선정 결과)
@@ -207,15 +206,13 @@ pandoc 등 시스템 설치 없이 `uv sync`만으로 동작(순수 Python + 리
 ```bash
 uv run python -m unittest discover -s tests -v   # 전체 테스트 (API 호출 없음, 네트워크 불필요)
 ```
-`tests/test_integration_live.py`는 기본적으로 스킵된다. 실제 OpenAI·Tavily API를 쓰는 통합
-테스트까지 돌리려면:
-```bash
-RUN_LIVE_TESTS=1 uv run python -m unittest tests.test_integration_live
-```
+실제 API를 쓰는 통합 테스트, Generation 품질(Faithfulness/Answer Relevance) 평가 실행법은
+[`tests/README.md`](./tests/README.md)에 정리되어 있다.
 
-검색 품질(Hit@K, MRR)은 색인 후 별도로 평가한다:
+Retrieval 품질(Tech Stack 절의 Held-out 15문항 결과 참고)은 색인 후 다시 측정할 수 있다
+(smoke 5문항은 회귀 점검용, heldout 15문항이 성능 평가용):
 ```bash
-uv run python -m tests.evaluate_retrieval
+uv run python -m tests.evaluate_retrieval --dataset heldout
 ```
 
 ### MPS(Apple Silicon GPU) 사용

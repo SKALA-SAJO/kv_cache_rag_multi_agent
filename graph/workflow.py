@@ -75,6 +75,7 @@ def print_timing_summary() -> None:
         print(f"  {name:<24} {total:7.1f}초{suffix}")
     print(f"  {'합계(노드 실행 시간)':<24} {sum(_NODE_ELAPSED.values()):7.1f}초")
 
+
 # 재검색 대상이 될 수 있는 Agent 노드 (evidence_items를 만드는 Agent 전체).
 # PDF 표는 evidence_items 생성 Agent로 기술조사·시장·이해관계자·도메인만 명시하지만,
 # 기술 성숙도 평가 Agent도 자체 RAG 검색을 하므로(PDF Agent 정의 표 RAG=O) 동일하게
