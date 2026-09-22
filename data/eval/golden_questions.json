@@ -10,7 +10,7 @@
   {
     "id": "infinigen_prefetch",
     "question": "InfiniGen은 필요한 KV Cache를 어떻게 관리하고 prefetch하는가?",
-    "expected_chunk_id": "infinigen-p4-text-0",
+    "expected_chunk_id": "infinigen-p2-text-0",
     "expected_source": "infinigen.pdf",
     "doc_types": ["technical_paper"],
     "technology": "InfiniGen"
