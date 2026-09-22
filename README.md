@@ -160,10 +160,12 @@ flowchart TD
 │   ├── state.py                 # State 정의 + 중복 제거 리듀서
 │   └── workflow.py               # 그래프 조립 + 표적 재시도 라우팅
 ├── scripts/
-│   └── download_papers.py    # 코퍼스 4종 다운로드 (CORPUS_SOURCES 단일 출처)
+│   ├── download_papers.py    # 코퍼스 4종 다운로드 (CORPUS_SOURCES 단일 출처)
+│   └── report_to_pdf.py      # report_*.md -> 제출용 RAG-Output PDF 변환
 ├── tests/                    # 재현 가능한 자동 테스트 (unittest, API 호출 없음)
 │   └── evaluate_retrieval.py    # Hit@K, MRR 평가 (data/eval/golden_questions.json 사용)
-├── outputs/                   # 평가 결과(최종 보고서 .md) 저장 (git 미포함)
+├── assets/fonts/              # PDF 변환용 나눔고딕(OFL 라이선스) — git 포함
+├── outputs/                   # 평가 결과(최종 보고서 .md, 제출용 .pdf) 저장 (git 미포함)
 ├── technologies.py            # 비교 대상 기술 메타데이터 (Human 선정 결과)
 ├── rubrics.py                 # evaluation_rubric State에 주입되는 구조화된 Rubric
 ├── config.py                  # 환경설정 (.env 로딩)
@@ -189,8 +191,14 @@ uv run python -m rag.ingest                # FAISS 색인 + BM25용 청크 생�
 
 uv run python app.py                       # 기본 평가 질문으로 실행
 uv run python app.py --question "..."      # 커스텀 질문으로 실행
+
+uv run python -m scripts.report_to_pdf     # 최신 report_*.md -> 제출용 RAG-Output PDF 변환
 ```
-실행 결과 최종 보고서는 콘솔에 출력되고 `outputs/report_{timestamp}.md`로 저장됨.
+실행 결과 최종 보고서는 콘솔에 출력되고 `outputs/report_{timestamp}.md`로 저장됨. 각 단계(Agent)
+실행 시간도 `[timing]` 로그와 종료 시 요약 표로 함께 출력됨.
+
+제출용 PDF(`RAG-Output_{캠퍼스}_{X반}_{이름들}.pdf`)는 `scripts/report_to_pdf.py`로 변환함 —
+pandoc 등 시스템 설치 없이 `uv sync`만으로 동작(순수 Python + 리포에 포함된 나눔고딕 폰트).
 
 `TAVILY_API_KEY`가 비어 있어도 실행은 되지만, 시장·이해관계자 평가는 외부 검색 없이 진행되어
 근거가 부족하면 "정보 부족"으로 표시됨.
