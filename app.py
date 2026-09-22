@@ -18,6 +18,7 @@ load_dotenv(override=True)
 
 from config import settings  # noqa: E402
 from graph.workflow import build_graph  # noqa: E402
+from rag.external_search import register as register_external_search  # noqa: E402
 
 DEFAULT_QUESTION = (
     "장문맥 처리 애플리케이션 관점에서 DeepSeek-V2 MLA와 InfiniGen을 기술 성숙도, 시장성, "
@@ -39,6 +40,7 @@ def main() -> None:
         )
         sys.exit(1)
 
+    register_external_search()
     workflow = build_graph()
     result = workflow.invoke({"research_question": args.question})
 
