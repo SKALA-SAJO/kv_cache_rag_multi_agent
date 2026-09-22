@@ -18,6 +18,7 @@ from agents.base import (
 from agents.schemas import QualitativeAssessment
 from graph.state import GraphState
 from rag.retriever import retrieve
+from scripts.download_papers import DOC_TYPE_DOMAIN, DOC_TYPE_TECHNICAL_PAPER
 
 SYSTEM_PROMPT = load_prompt("domain_evaluation")
 AGENT_NAME = "domain_evaluation"
@@ -53,7 +54,7 @@ def _retrieve_domain_corpus(retry_hint: str = "") -> list[Document]:
     docs: list[Document] = []
     # 각각에서 일부만 가져오도록 top_k를 작게 둔다.
     for q in queries:
-        docs.extend(retrieve(q, top_k=3))
+        docs.extend(retrieve(q, top_k=3, doc_types=DOC_TYPE_DOMAIN))
     return _dedup_documents(docs)
 
 
@@ -80,7 +81,11 @@ def run(state: GraphState) -> dict:
         query = f"{tech_name} 장문맥 long context 컨텍스트 길이 메모리 효율 정확도 지연"
         if retry_hint:
             query = f"{query} {retry_hint}"
-        tech_docs = retrieve(query)
+        tech_docs = retrieve(
+            query,
+            doc_types=DOC_TYPE_TECHNICAL_PAPER,
+            technology=tech_name,
+        )
         all_docs.extend(tech_docs)
         all_evidence_items.extend(
             documents_to_evidence_items(

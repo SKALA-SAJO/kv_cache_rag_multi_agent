@@ -20,5 +20,3 @@ data/raw/*
 
 outputs/*
 !outputs/.gitkeep
-
-sample.pdf
