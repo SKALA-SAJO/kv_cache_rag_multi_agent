@@ -1,0 +1,20 @@
+[project]
+name = "kv-cache-rag-multi-agent"
+version = "0.1.0"
+description = "KV Cache 최적화 기술 다관점 평가 Multi-Agent RAG 시스템"
+requires-python = ">=3.14"
+dependencies = [
+    "faiss-cpu>=1.8.0",
+    "langchain>=1.0.0",
+    "langchain-classic>=1.0.0",
+    "langchain-community>=0.3.0",
+    "langchain-huggingface>=0.1.0",
+    "langchain-openai>=0.2.0",
+    "langgraph>=0.2.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.3.0",
+    "pypdf>=4.3.0",
+    "python-dotenv>=1.0.1",
+    "rank-bm25>=0.2.2",
+    "sentence-transformers>=3.0.0",
+]

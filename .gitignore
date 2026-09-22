@@ -10,9 +10,6 @@ venv/
 .DS_Store
 .vscode/
 
-pyproject.toml
-uv.lock
-
 vectorstore/*
 !vectorstore/.gitkeep
 

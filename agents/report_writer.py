@@ -24,7 +24,7 @@ def run(state: GraphState) -> dict:
         "synthesis": state.get("synthesis"),
         "faithfulness_check": state.get("faithfulness_check"),
         "references": state.get("references"),
-        "verification_retry_count": state.get("verification_retry_count", 0),
+        "retry_count": state.get("retry_count", 0),
     }
     user_content = json.dumps(payload, ensure_ascii=False, indent=2)
 

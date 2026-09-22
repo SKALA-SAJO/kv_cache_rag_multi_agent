@@ -14,7 +14,7 @@ import sys
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 from config import settings  # noqa: E402
 from graph.workflow import build_graph  # noqa: E402

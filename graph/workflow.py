@@ -1,19 +1,27 @@
-"""LangGraph 워크플로우 조립 (RAG-Design PDF D.2 절 Graph 흐름 설계를 그대로 구현).
+"""LangGraph 워크플로우 조립 (sample.pdf D절 Graph 흐름 설계, 9쪽 플로우차트를 반영).
 
-PDF의 노드 A~L 대응 관계:
-  A(평가 질문 입력)+B(기술 정보 확인)         -> init_node
-  C(기술 문서 RAG 검색)+D(기술 조사 Agent)      -> tech_research (자체적으로 RAG 검색 수행)
-  E/F/G/H(4관점 평가 Agent)                    -> trl/market/stakeholder/domain_evaluation
-  I(평가 종합 Agent)+S(synthesis 생성)          -> synthesis
-  V(검증 Agent)                                -> faithfulness_check
-  J(분기: 근거 충분한가?)                       -> route_after_faithfulness (조건부 엣지)
-  K(보고서 생성 Agent)+L(최종 보고서)            -> report_writer
+PDF 노드 대응 관계:
+  평가 질문 입력 + 기술 정보 및 평가 Rubric 로드   -> init_node
+  기술원문 RAG 검색 + 기술 조사 Agent              -> tech_research (자체적으로 RAG 검색 수행)
+  기술 성숙도/시장/이해관계자/도메인 평가 Agent     -> trl/market/stakeholder/domain_evaluation
+  평가 종합 Agent + synthesis 생성                 -> synthesis
+  검증 Agent(Faithfulness Check)                   -> faithfulness_check
+  {Faithfulness Check 통과?} 분기                   -> route_after_faithfulness (조건부 엣지)
+  보고서 생성 Agent + 최종 평가 보고서               -> report_writer
 
-C/D, I/S를 하나의 노드로 합친 이유는 각 단계가 순수 함수 하나로 표현 가능해 별도 노드로
-쪼개는 이점이 없기 때문이다 (README 'PDF 설계와의 대응' 절 참고).
+## 재검색 루프 (9쪽 플로우차트의 핵심 차이점)
+기존 v0.0은 실패 시 무조건 tech_research부터 전체를 다시 돌았다. PDF 업데이트본은
+"실패 claim의 출처 Agent로 라우팅"하여 실패에 책임 있는 Agent만 재실행하도록 요구한다.
+이를 위해 LangGraph의 Send API로 faithfulness_check가 계산한 agents_to_retry 목록에
+있는 노드만 동적으로 재호출한다. 재실행된 Agent의 출력은 기존 정적 엣지(예:
+market_evaluation -> synthesis)를 그대로 타고 흘러 synthesis가 다시 실행되며, 이때
+재실행되지 않은 다른 평가 Agent들의 값은 State에 남아있는 이전 결과가 그대로 쓰인다
+(LangGraph는 매 superstep마다 "이번에 갱신된 채널 중 하나라도 자신의 입력과 걸려 있으면"
+재실행하는 방식이라 나머지 3개를 다시 돌 필요가 없다).
 """
 
 from langgraph.graph import END, StateGraph
+from langgraph.types import Send
 
 from agents import (
     domain_evaluation,
@@ -27,28 +35,59 @@ from agents import (
 )
 from config import settings
 from graph.state import GraphState
+from rubrics import EVALUATION_RUBRIC
 from technologies import SELECTED_TECHNOLOGIES
+
+# 재검색 대상이 될 수 있는 Agent 노드 (evidence_items를 만드는 Agent 전체).
+# PDF 표는 evidence_items 생성 Agent로 기술조사·시장·이해관계자·도메인만 명시하지만,
+# 기술 성숙도 평가 Agent도 자체 RAG 검색을 하므로(PDF Agent 정의 표 RAG=O) 동일하게
+# 재검색 대상에 포함한다.
+EVALUATION_AGENT_NODES = [
+    "tech_research",
+    "trl_evaluation",
+    "market_evaluation",
+    "stakeholder_evaluation",
+    "domain_evaluation",
+]
 
 
 def init_node(state: GraphState) -> dict:
-    """A. 평가 질문 입력 + B. 기술 정보 확인 (Human 기반 선정 결과를 State에 주입)."""
+    """평가 질문 입력 + 기술 정보 및 평가 Rubric 로드 (Human 선정값 + Rubric을 State에 주입)."""
     return {
         "selected_technologies": SELECTED_TECHNOLOGIES,
-        "verification_retry_count": 0,
+        "evaluation_rubric": EVALUATION_RUBRIC,
+        "retry_count": 0,
+        "max_retries": settings.max_verification_retries,
+        "retry_hints": {},
     }
 
 
-def route_after_faithfulness(state: GraphState) -> str:
-    """J. 근거와 출처가 충분한가? (Faithfulness Check 통과 기준)."""
+def route_after_faithfulness(state: GraphState):
+    """{Faithfulness Check 통과?} 분기.
+
+    - 통과: report_writer로 진행.
+    - 실패 + 재시도 소진: '정보 부족 claim 표시 및 한계 기록'은 faithfulness_check가
+      이미 State에 남겼으므로 그대로 report_writer로 진행.
+    - 실패 + 재시도 가능: 실패 claim의 출처 Agent들만 Send로 재호출.
+    - 실패했지만 책임 Agent를 특정할 수 없는 경우(예: 아직 evidence_items를 만들지
+      않는 Agent의 주장): 재시도해도 해결되지 않으므로 report_writer로 진행.
+    """
     check = state.get("faithfulness_check", {})
-    retry_count = state.get("verification_retry_count", 0)
+    retry_count = state.get("retry_count", 0)
+    max_retries = state.get("max_retries", settings.max_verification_retries)
 
     if check.get("passed", False):
-        return "report"
-    if retry_count >= settings.max_verification_retries:
-        # 재시도 한도 초과: 보고서는 생성하되 6.1 '한계' 절에 검증 미통과 사실이 반영된다.
-        return "report"
-    return "retry"
+        return "report_writer"
+    if retry_count >= max_retries:
+        return "report_writer"
+
+    agents_to_retry = [
+        name for name in check.get("agents_to_retry", []) if name in EVALUATION_AGENT_NODES
+    ]
+    if not agents_to_retry:
+        return "report_writer"
+
+    return [Send(name, dict(state)) for name in agents_to_retry]
 
 
 def build_graph():
@@ -67,7 +106,7 @@ def build_graph():
     graph.set_entry_point("init")
     graph.add_edge("init", "tech_research")
 
-    # D -> E, F, G, H (병렬 팬아웃) -> I (팬인)
+    # 기술 조사 Agent -> 4관점 평가 Agent (병렬 팬아웃) -> 평가 종합 Agent (팬인)
     for perspective_node in [
         "trl_evaluation",
         "market_evaluation",
@@ -82,7 +121,7 @@ def build_graph():
     graph.add_conditional_edges(
         "faithfulness_check",
         route_after_faithfulness,
-        {"retry": "tech_research", "report": "report_writer"},
+        EVALUATION_AGENT_NODES + ["report_writer"],
     )
 
     graph.add_edge("report_writer", END)

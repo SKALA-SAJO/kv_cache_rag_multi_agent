@@ -68,3 +68,48 @@ def documents_to_references(documents: list[Document]) -> list[dict]:
             }
         )
     return refs
+
+
+def documents_to_evidence_items(
+    documents: list[Document],
+    agent: str,
+    claim: str,
+    quote_length: int = 300,
+) -> list[dict]:
+    """RAG로 검색된 문서를 evidence_items(State: evidence_items) 형태로 변환한다.
+
+    claim-level(어떤 문장이 어떤 근거를 뒷받침하는지)까지는 세분화하지 않고, 이 Agent가
+    이 호출에서 사용한 근거 전체를 claim 하나에 묶어 등록한다 — 세부 claim 단위 귀속은
+    평가 종합 Agent가 만드는 synthesis 단계 이후 검증 Agent가 evidence_items를 참조해
+    판단한다. RAG로 실제 검색된 문서에서만 만들어지므로 근거를 지어내지 않는다.
+    """
+    items = []
+    for doc in documents:
+        items.append(
+            {
+                "claim": claim,
+                "evidence_quote": doc.page_content[:quote_length],
+                "source_url": None,
+                "document_id": doc.metadata.get("source", "unknown"),
+                "page_or_section": str(doc.metadata.get("page", "?")),
+                "source_type": "RAG",
+                "limitation": "",
+                "agent": agent,
+            }
+        )
+    return items
+
+
+def format_evidence_items(evidence_items: list[dict]) -> str:
+    """검증 Agent가 참조할 수 있도록 evidence_items를 번호 붙은 컨텍스트 문자열로 변환한다."""
+    if not evidence_items:
+        return "(등록된 근거 없음)"
+    blocks = []
+    for i, item in enumerate(evidence_items):
+        source = item.get("source_url") or item.get("document_id") or "unknown"
+        page = item.get("page_or_section") or "?"
+        blocks.append(
+            f"[{i}] (agent={item.get('agent')}, source_type={item.get('source_type')}, "
+            f"{source} {page})\n{item.get('evidence_quote', '')}"
+        )
+    return "\n\n".join(blocks)
