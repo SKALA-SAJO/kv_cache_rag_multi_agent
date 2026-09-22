@@ -1,0 +1,44 @@
+[
+  {
+    "id": "four_perspective_comparison",
+    "question": "장문맥 처리 애플리케이션 관점에서 DeepSeek-V2 MLA와 InfiniGen을 기술 성숙도, 시장성, 이해관계자, 도메인 적합성 4가지 관점에서 근거 기반으로 비교 평가하라.",
+    "required_aspects": [
+      "DeepSeek-V2 MLA와 InfiniGen의 비교 범위",
+      "기술 성숙도 관점",
+      "시장성 관점",
+      "이해관계자 관점",
+      "장문맥 처리 애플리케이션 적합성 관점",
+      "근거 또는 출처",
+      "한계 또는 정보 부족 표시",
+      "최종 승자 또는 단일 추천을 하지 않는 조건부 비교"
+    ],
+    "evaluation_scope": "final_report"
+  },
+  {
+    "id": "long_context_tradeoffs",
+    "question": "장문맥 처리 애플리케이션에서 DeepSeek-V2 MLA와 InfiniGen의 메모리 효율, 정확도 보존, 처리 지연, 적용 조건의 교환관계를 설명하라.",
+    "required_aspects": [
+      "장문맥 처리 애플리케이션이라는 도메인",
+      "메모리 효율",
+      "정확도 보존 또는 품질 관련 근거",
+      "처리 지연 또는 전송 지연",
+      "모델 구조 변경과 서빙 인프라 조건의 차이",
+      "서로 다른 논문 수치를 직접 대결시키지 않는 한계",
+      "기술별 유리한 조건"
+    ],
+    "evaluation_scope": "final_report"
+  },
+  {
+    "id": "evidence_and_limitations",
+    "question": "DeepSeek-V2 MLA와 InfiniGen의 공개 정보 기반 평가에서 확인 가능한 근거와 정보 부족으로 남겨야 하는 한계를 구분해 설명하라.",
+    "required_aspects": [
+      "공개 논문 또는 공식 구현 자료에 근거한 사실",
+      "기술 성숙도 추정의 불확실성",
+      "시장 또는 이해관계자 평가의 외부 정보 한계",
+      "근거 부족 claim의 정보 부족 처리",
+      "Faithfulness Check 또는 claim-evidence 검증",
+      "특정 기술의 최종 우열을 선언하지 않는 결론"
+    ],
+    "evaluation_scope": "final_report"
+  }
+]
