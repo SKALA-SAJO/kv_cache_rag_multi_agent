@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TypeVar
+import json
+from typing import Any, TypeVar
 
 from langchain_core.documents import Document
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
@@ -13,11 +15,31 @@ from config import PROMPTS_DIR, settings
 
 T = TypeVar("T", bound=BaseModel)
 
+# 외부 검색 API는 팀 합의 후 rag/external_search.py에서 구현한다. 이 모듈은
+# Tavily, Google Custom Search 등 특정 공급자에 의존하지 않고 BaseTool 계약만 사용한다.
+_external_search_tool: BaseTool | None = None
+
 
 def get_llm(role: str = "generator", temperature: float = 0.0) -> ChatOpenAI:
     """role: "generator" 또는 "judge" (PDF Tech Stack 절 LLM/Generator·LLM/Judge 구분)."""
     model = settings.judge_model if role == "judge" else settings.generator_model
     return ChatOpenAI(model=model, temperature=temperature)
+
+
+def register_external_search_tool(tool: BaseTool) -> None:
+    """선정된 외부 검색 도구를 시장·이해관계자 Agent 공용으로 등록한다.
+
+    Phase 3에서 구현할 ``rag.external_search`` 어댑터가 앱 시작 시 한 번 호출한다.
+    BaseTool의 입력은 ``{"query": str}``, 출력은 title/url/content 필드를 가진
+    dict 목록(또는 해당 JSON 문자열)으로 정규화해야 한다.
+    """
+    global _external_search_tool
+    _external_search_tool = tool
+
+
+def get_external_search_tool() -> BaseTool | None:
+    """등록된 외부 검색 도구를 반환한다. API 연동 전에는 None을 반환한다."""
+    return _external_search_tool
 
 
 def load_prompt(name: str) -> str:
@@ -35,6 +57,134 @@ def structured_call(
     return llm.invoke(
         [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
     )
+
+
+def _normalize_search_results(raw_result: Any) -> list[dict[str, str]]:
+    """서로 다른 검색 API 응답을 title/url/content 공통 형식으로 정규화한다."""
+    if isinstance(raw_result, str):
+        try:
+            raw_result = json.loads(raw_result)
+        except json.JSONDecodeError:
+            raw_result = [{"content": raw_result}]
+    if isinstance(raw_result, dict):
+        raw_result = raw_result.get("results", [raw_result])
+    if not isinstance(raw_result, list):
+        return []
+
+    normalized: list[dict[str, str]] = []
+    for item in raw_result:
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content") or item.get("snippet") or "").strip()
+        url = str(item.get("url") or "").strip()
+        title = str(item.get("title") or url or "외부 검색 결과").strip()
+        if content or url:
+            normalized.append({"title": title, "url": url, "content": content})
+    return normalized
+
+
+def _deduplicate_search_results(results: list[dict[str, str]]) -> list[dict[str, str]]:
+    seen: set[tuple[str, str]] = set()
+    unique: list[dict[str, str]] = []
+    for result in results:
+        key = (result.get("url", ""), result.get("content", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(result)
+    return unique
+
+
+def format_search_results(results: list[dict[str, str]]) -> str:
+    """외부 검색의 실제 결과만 최종 구조화 평가 호출에 전달한다."""
+    if not results:
+        return "(외부 검색 결과 없음)"
+    blocks = []
+    for index, result in enumerate(results, start=1):
+        blocks.append(
+            f"[{index}] {result.get('title', '외부 검색 결과')}\n"
+            f"URL: {result.get('url', '')}\n"
+            f"{result.get('content', '')}"
+        )
+    return "\n\n".join(blocks)
+
+
+def run_external_search_loop(
+    system_prompt: str,
+    user_content: str,
+    search_tool: BaseTool | None,
+    role: str = "generator",
+    max_tool_rounds: int = 2,
+) -> list[dict[str, str]]:
+    """LLM이 검색 질의를 만들고 도구 결과를 읽는 공용 tool-calling 루프.
+
+    검색 API가 아직 등록되지 않은 경우 빈 목록을 반환한다. 이때 호출 Agent는
+    evidence_items를 만들지 않으므로, 일반 지식을 외부 검색 근거처럼 기록하지 않는다.
+    """
+    if search_tool is None:
+        return []
+
+    tool_instruction = """
+외부 검색 도구를 사용해 평가에 필요한 공개 근거를 찾아라. 검색 질의는 구체적으로 작성하고,
+공식 문서·논문·공식 저장소·신뢰할 수 있는 산업 자료를 우선한다. 충분한 결과를 얻으면 도구 호출을
+멈춘다. 도구 결과에 없는 사실이나 URL을 만들어내지 않는다.
+"""
+    messages = [
+        SystemMessage(content=f"{system_prompt}\n\n{tool_instruction}"),
+        HumanMessage(content=user_content),
+    ]
+    llm_with_tools = get_llm(role).bind_tools([search_tool])
+    collected: list[dict[str, str]] = []
+
+    for _ in range(max_tool_rounds):
+        response = llm_with_tools.invoke(messages)
+        messages.append(response)
+        tool_calls = response.tool_calls
+        if not tool_calls:
+            break
+
+        for tool_call in tool_calls:
+            if tool_call["name"] != search_tool.name:
+                messages.append(
+                    ToolMessage(
+                        content="등록되지 않은 도구 요청입니다.",
+                        tool_call_id=tool_call["id"],
+                    )
+                )
+                continue
+            raw_result = search_tool.invoke(tool_call["args"])
+            normalized = _normalize_search_results(raw_result)
+            collected.extend(normalized)
+            messages.append(
+                ToolMessage(
+                    content=json.dumps(normalized, ensure_ascii=False),
+                    tool_call_id=tool_call["id"],
+                )
+            )
+
+    return _deduplicate_search_results(collected)
+
+
+def structured_call_with_external_search(
+    schema: type[T],
+    system_prompt: str,
+    user_content: str,
+    search_tool: BaseTool | None,
+    role: str = "generator",
+) -> tuple[T, list[dict[str, str]]]:
+    """검색 → 실제 검색 결과 주입 → Pydantic 구조화 평가를 수행한다.
+
+    최종 출력은 별도의 ``structured_call``로 생성해 기존 6개 Agent와 같은
+    Pydantic 출력 패턴을 유지한다.
+    """
+    results = run_external_search_loop(system_prompt, user_content, search_tool, role)
+    search_context = format_search_results(results)
+    final_content = (
+        f"{user_content}\n\n## 외부 검색 결과\n{search_context}\n\n"
+        "외부 검색 결과가 있다면 그 결과에 포함된 사실과 URL만 외부 출처로 사용하라. "
+        "검색 결과가 없으면 외부 검색 근거가 없음을 limitations와 confidence에 명시하라."
+    )
+    return structured_call(schema, system_prompt, final_content, role), results
 
 
 def format_context(documents: list[Document]) -> str:
@@ -130,6 +280,20 @@ def search_results_to_evidence_items(
             }
         )
     return items
+
+
+def search_results_to_references(results: list[dict[str, str]]) -> list[dict]:
+    """실제로 검색된 웹 자료만 State ``references`` 형식으로 변환한다."""
+    references = []
+    for result in _deduplicate_search_results(results):
+        references.append(
+            {
+                "source": result.get("title") or result.get("url") or "외부 검색 결과",
+                "url": result.get("url"),
+                "source_type": "external_search",
+            }
+        )
+    return references
 
 
 def format_evidence_items(evidence_items: list[dict]) -> str:
