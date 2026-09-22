@@ -9,6 +9,8 @@ venv/
 .DS_Store
 .vscode/
 
+PRESENTATION_NOTES.md
+
 vectorstore/*
 !vectorstore/.gitkeep
 
