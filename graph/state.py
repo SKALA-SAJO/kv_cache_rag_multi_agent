@@ -1,16 +1,66 @@
 """LangGraph State 정의 (sample.pdf D.1절 State 설계 표를 반영).
 
 retrieved_documents / references / evidence_items는 병렬 Agent가 누적하고 재검색
-루프에서도 계속 늘어나야 하므로 operator.add 리듀서를 쓴다 (PDF D.3 설계 원칙:
-"병렬 Agent가 누적하는 retrieved_documents, references, evidence_items에는
-list reducer를 적용"). 그 외 필드는 담당 Agent가 한 번씩만 쓰므로 기본(마지막
-쓰기 우선) 동작을 사용한다.
+루프에서도 계속 늘어나야 하므로 list 리듀서를 쓴다. PDF D.3 설계 원칙: "병렬 Agent가
+누적하는 retrieved_documents, references, evidence_items에는 list reducer를 적용하고,
+URL 또는 document_id 기준으로 중복을 제거한다" — 단순 concat(operator.add)이 아니라
+아래 dedupe_* 함수로 매 병합 시 전역 중복 제거까지 수행한다. 그 외 필드는 담당 Agent가
+한 번씩만 쓰므로 기본(마지막 쓰기 우선) 동작을 사용한다.
 """
 
-import operator
 from typing import Annotated, Any, TypedDict
 
 from langchain_core.documents import Document
+
+
+def dedupe_documents(existing: list[Document], new: list[Document]) -> list[Document]:
+    """retrieved_documents 리듀서: chunk_id(없으면 source+page+본문 앞부분) 기준 중복 제거."""
+    combined = existing + new
+    seen: set = set()
+    result: list[Document] = []
+    for doc in combined:
+        key = doc.metadata.get("chunk_id") or (
+            doc.metadata.get("source"),
+            doc.metadata.get("page"),
+            doc.page_content[:80],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(doc)
+    return result
+
+
+def dedupe_references(existing: list[dict], new: list[dict]) -> list[dict]:
+    """references 리듀서: (source, page) 기준 중복 제거."""
+    combined = existing + new
+    seen: set = set()
+    result: list[dict] = []
+    for ref in combined:
+        key = (ref.get("source"), ref.get("page"))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(ref)
+    return result
+
+
+def dedupe_evidence_items(existing: list[dict], new: list[dict]) -> list[dict]:
+    """evidence_items 리듀서: document_id/source_url + 페이지·섹션 + 인용문 앞부분 기준 중복 제거."""
+    combined = existing + new
+    seen: set = set()
+    result: list[dict] = []
+    for item in combined:
+        key = (
+            item.get("document_id") or item.get("source_url"),
+            item.get("page_or_section"),
+            (item.get("evidence_quote") or "")[:80],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
 
 
 class GraphState(TypedDict, total=False):
@@ -21,7 +71,7 @@ class GraphState(TypedDict, total=False):
     max_retries: int
 
     # 기술 문서 RAG 검색 / 기술 조사 Agent
-    retrieved_documents: Annotated[list[Document], operator.add]
+    retrieved_documents: Annotated[list[Document], dedupe_documents]
     technical_evidence: dict[str, Any]
 
     # 4관점 평가 Agent
@@ -30,11 +80,11 @@ class GraphState(TypedDict, total=False):
     stakeholder_evaluation: dict[str, Any]
     domain_evaluation: dict[str, Any]
 
-    # 전체 Agent가 누적 (URL/document_id 기준 중복 제거는 agents/base.py에서 수행)
-    references: Annotated[list[dict[str, Any]], operator.add]
+    # 전체 Agent가 누적, URL/document_id 기준 중복 제거
+    references: Annotated[list[dict[str, Any]], dedupe_references]
     # claim, evidence_quote, source_url/document_id, page_or_section, source_type,
     # limitation(+agent)을 담는 공통 근거 목록 (agents/schemas.py의 EvidenceItem)
-    evidence_items: Annotated[list[dict[str, Any]], operator.add]
+    evidence_items: Annotated[list[dict[str, Any]], dedupe_evidence_items]
 
     # 평가 종합 / 검증 / 보고서 생성 Agent
     synthesis: dict[str, Any]
