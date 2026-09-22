@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     judge_model: str = "gpt-4.1-mini"
 
     embedding_model: str = "BAAI/bge-m3"
-    reranker_model: str = "BAAI/bge-reranker-base"
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
     # LangGraph가 4관점 평가 Agent를 병렬(멀티스레드)로 실행하는데, 그중 기술 성숙도·도메인
     # 평가 Agent가 동시에 reranker/embedding을 호출한다. PyTorch의 MPS(Apple GPU) 백엔드는
     # 동시 추론이 스레드 안전하지 않아 세그폴트가 발생하므로 기본값은 "cpu"로 둔다.
@@ -30,6 +30,10 @@ class Settings(BaseSettings):
 
     retrieval_top_k_candidates: int = 25
     retrieval_top_k_final: int = 6
+    # doc_type/technology로 좁혀 검색할 때 FAISS가 필터 적용 전에 살펴볼 후보 수.
+    # 기본(필터 없음) 검색에는 영향 없음 — 필터가 있을 때만 사용된다. 코퍼스가
+    # 200페이지 이내로 작게 유지되므로(설계서 B.3) 전체를 커버할 만큼 넉넉히 잡는다.
+    retrieval_fetch_k: int = 500
 
     max_verification_retries: int = 2
 
