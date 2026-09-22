@@ -11,13 +11,14 @@
 
 import argparse
 import sys
+import time
 
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
 from config import settings  # noqa: E402
-from graph.workflow import build_graph  # noqa: E402
+from graph.workflow import build_graph, print_timing_summary  # noqa: E402
 from rag.external_search import register as register_external_search  # noqa: E402
 
 DEFAULT_QUESTION = (
@@ -42,10 +43,15 @@ def main() -> None:
 
     register_external_search()
     workflow = build_graph()
+
+    total_start = time.perf_counter()
     result = workflow.invoke({"research_question": args.question})
+    total_elapsed = time.perf_counter() - total_start
 
     print("\n=== 최종 평가 보고서 ===\n")
     print(result["final_report"])
+    print_timing_summary()
+    print(f"\n[timing] 전체 실행 시간: {total_elapsed:.1f}초")
 
 
 if __name__ == "__main__":
