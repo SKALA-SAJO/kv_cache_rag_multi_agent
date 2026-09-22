@@ -190,14 +190,19 @@ uv run python -m rag.ingest                # FAISS 색인 + BM25용 청크 생�
 
 uv run python app.py                       # 기본 평가 질문으로 실행
 uv run python app.py --question "..."      # 커스텀 질문으로 실행
-
-uv run python -m scripts.report_to_pdf     # 최신 report_*.md -> 제출용 RAG-Output PDF 변환
 ```
 실행 결과 최종 보고서는 콘솔에 출력되고 `outputs/report_{timestamp}.md`로 저장됨. 각 단계(Agent)
 실행 시간도 `[timing]` 로그와 종료 시 요약 표로 함께 출력됨.
 
-제출용 PDF(`RAG-Output_{캠퍼스}_{X반}_{이름들}.pdf`)는 `scripts/report_to_pdf.py`로 변환함 —
-pandoc 등 시스템 설치 없이 `uv sync`만으로 동작(순수 Python + 리포에 포함된 나눔고딕 폰트).
+`python app.py` 실행이 끝날 때마다 제출용 PDF(`outputs/RAG-Output_{캠퍼스}_{X반}_{이름들}.pdf`)도
+자동으로 최신 보고서 기준으로 갱신됨 — 별도 명령 불필요. pandoc 등 시스템 설치 없이 `uv sync`만으로
+동작(순수 Python + 리포에 포함된 나눔고딕 폰트). 특정 과거 보고서를 다시 변환하려면:
+```bash
+uv run python -m scripts.report_to_pdf --input outputs/report_20260922_121006.md
+```
+
+`TAVILY_API_KEY`가 비어 있어도 실행은 되지만, 시장·이해관계자 평가는 외부 검색 없이 진행되어
+근거가 부족하면 "정보 부족"으로 표시됨.
 
 `TAVILY_API_KEY`가 비어 있어도 실행은 되지만, 시장·이해관계자 평가는 외부 검색 없이 진행되어
 근거가 부족하면 "정보 부족"으로 표시됨.
@@ -235,10 +240,12 @@ PyTorch MPS 백엔드가 스레드 세이프하지 않아 세그폴트가 났다
 - 전은배 : Agent 초안(v0.0) 설계 및 구현(State/Schema/Graph, 8개 Agent, 기술 문서 RAG
   파이프라인) — 이후 표적 재시도 라우팅, Tavily 외부 검색 도구 등록, MPS 동시성 버그 수정
 - 박성우 : RAG 코퍼스 확장(구현 README·도메인 벤치마크·시장 문서 수집, 토큰 기반 청킹),
-  외부 검색 tool-calling 공용 루프 설계, 재현 가능한 테스트 스위트 구축
+  외부 검색 tool-calling 공용 루프 설계, 재현 가능한 테스트 스위트 구축 및 Held-out 15문항
+  Retrieval 성능 측정(Hit Rate@K/MRR)
 - 서지원 : 기술 조사·기술 성숙도 평가 Agent 고도화(기술원문/구현자료 분리 검색, TRL 구간별
   정보 갭 반영)
 - 최윤영 : 도메인 평가 Agent 고도화
 - 이승준 : Retriever `doc_type`/`technology` 필터링, Cross-encoder를 `bge-reranker-v2-m3`로 업그레이드
 - 박인애 : 시장 평가 Agent RAG 코퍼스 연동, 시장·이해관계자 프롬프트의 3단계 근거 라벨 정합화,
-  보고서 REFERENCE 형식 정리
+  보고서 REFERENCE 형식 정리, 제출용 PDF 변환(`scripts/report_to_pdf.py`, 실행 종료 시 자동
+  갱신) 및 단계별 Agent 실행 시간 로깅 구현
