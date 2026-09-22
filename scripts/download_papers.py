@@ -17,6 +17,9 @@ RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 PAPERS = {
     "deepseek_v2_mla.pdf": "https://arxiv.org/pdf/2405.04434",
     "infinigen.pdf": "https://arxiv.org/pdf/2406.19707",
+    # Domain corpus (sample.pdf 'RAG 문서 구성')
+    "longbench.pdf": "https://aclanthology.org/2024.acl-long.172.pdf",
+    "ruler.pdf": "https://arxiv.org/pdf/2404.06654",
 }
 
 
