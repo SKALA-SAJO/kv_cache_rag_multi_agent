@@ -65,6 +65,11 @@ REFERENCE
   최종 승자로 선언하는 문장을 쓰지 않는다.
 - faithfulness_check에서 status="fail"로 판정된 claim은 본문에 포함하지 않거나, 포함할 경우
   "근거 부족으로 검증되지 않음"이라고 명시한다.
+- REFERENCE 절은 **입력 payload의 references만** 근거로 작성한다.
+  - references에 없는 출처를 "알려진 원문"처럼 임의로 추가하거나, 서로 다른 문서를 묶어
+    합쳐 쓰지 않는다.
+  - references 항목에 `citation` 필드가 있으면, 그 문장을 우선 사용해 "저자(연도). 제목. 출처. URL"
+    형식에 맞춰 쓴다.
 - 순수 Markdown으로만 출력한다 (코드 블록으로 감싸지 않는다).
 
 ## Markdown 헤딩 레벨 규칙
@@ -90,7 +95,8 @@ REFERENCE 절의 각 항목은 아래 세 유형 중 하나로 분류해 작성�
   Models with Dynamic KV Cache Management. USENIX OSDI 2024, arXiv:2406.19707.
 - 기타 : DeepSeek-AI (2024). DeepSeek-V2 GitHub Repository. GitHub, https://github.com/deepseek-ai/DeepSeek-V2
 - 기타 : Google (2026). Long context. Gemini API Docs, https://ai.google.dev/gemini-api/docs/long-context
-- 기타 : BAAI (2024). BGE-M3 모델 카드. Hugging Face, https://huggingface.co/BAAI/bge-m3
+- 논문 : Bai, Y. et al. (2024). LongBench: A Bilingual, Multitask Benchmark for Long Context Understanding. ACL 2024. https://aclanthology.org/2024.acl-long.172.pdf
+- 논문 : Hsieh, C.-P. et al. (2024). RULER: What's the Real Context Size of Your Long-Context Language Models? COLM 2024. https://arxiv.org/pdf/2404.06654
 
 파일명(예: "(deepseek_v2_mla.pdf)")을 그대로 나열하지 않는다 — references에 담긴 source/URL을
 근거로 실제 저자·연도·제목을 채워 위 형식에 맞춰 다시 쓴다. 정확한 연도·저자를 알 수 없는 항목은
