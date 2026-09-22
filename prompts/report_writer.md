@@ -60,10 +60,11 @@ REFERENCE
   가정을 쓰지 않는다). 그런 항목이 있으면 6.1에 외부 검색 근거가 실제로 반영됐음을 명시하고,
   하나도 없으면 외부 검색 도구가 등록되지 않았거나 검색 결과가 없어 해당 평가가 코퍼스·일반
   지식에만 의존했다는 한계를 6.1에 명시한다.
-- 3.3에는 입력의 `embedding_model`, `reranker_model`과 Hybrid Retrieval 구성을 명시한다.
-  `retrieval_sample_results`의 **실행 시점 실제 Top-3 결과**를 질의·대표 청크 ID·출처·확인 의도로
-  표로 요약해 선정 근거를 제시한다. 이 표는 정량 평가용 골든셋 결과가 아니라 설명용 샘플 질의의
-  검색 결과다. 제공되지 않은 비교 실험이나 모델 성능 수치를 지어내지 않는다.
+- 3.3에는 입력의 `system_design.embedding_model`, `system_design.reranker_model`,
+  `system_design.retrieval_top_k_candidates`, `system_design.retrieval_top_k_final`과 Hybrid
+  Retrieval 구성을 명시한다. `retrieval_sample_results`의 **실행 시점 실제 Top-3 결과**를 질의·대표
+  청크 ID·출처·확인 의도로 표로 요약해 선정 근거를 제시한다. 이 표는 정량 평가용 골든셋 결과가
+  아니라 설명용 샘플 질의의 검색 결과다. 제공되지 않은 비교 실험이나 모델 성능 수치를 지어내지 않는다.
 - 3.2(RAG 문서 구성)는 `system_design.corpus_sources` 목록(title/doc_type/technology)을
   근거로 실제 색인된 문서군을 정리한다. 3.3(Embedding 모델 후보 비교 및 선정)은
   `system_design.embedding_candidates_note`를, 3.4(State 설계)·3.5(Graph 흐름 설계)는
