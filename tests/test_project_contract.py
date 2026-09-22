@@ -42,6 +42,21 @@ class ProjectContractTest(unittest.TestCase):
         ]:
             self.assertIn(section, readme)
 
+    def test_readme_records_heldout_retrieval_metrics(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        for expected in [
+            "Held-out 15문항",
+            "Hit Rate@1 0.533",
+            "Hit Rate@3 0.867",
+            "Hit Rate@5 0.867",
+            "MRR 0.678",
+            "python -m tests.evaluate_retrieval --dataset heldout",
+        ]:
+            self.assertIn(expected, readme)
+
+        self.assertNotIn("golden_questions.json", readme)
+
 
 if __name__ == "__main__":
     unittest.main()

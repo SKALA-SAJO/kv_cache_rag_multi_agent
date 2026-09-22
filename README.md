@@ -47,6 +47,7 @@
 - LLM/Judge : OpenAI GPT (`JUDGE_MODEL`, Faithfulness Check 전용, 기본값 `gpt-5-mini`)
 - Retrieval : FAISS(Dense) + BM25(Sparse) Hybrid Retrieval(RRF 결합, Top-20~30) →
   BAAI/bge-reranker-v2-m3 Cross-encoder 재정렬(Top-5~8). `doc_type`/`technology` 필터링 지원
+  - Held-out 15문항 평가: **Hit Rate@1 0.533, Hit Rate@3 0.867, Hit Rate@5 0.867, MRR 0.678**
 - Embedding : BAAI/bge-m3 (다국어·긴 입력·Dense/Sparse 지원). 기본 연산 장치는 `cpu`(팀
   전체 호환), Apple Silicon 사용자는 `EMBEDDING_DEVICE=mps`로 개인 설정 시 GPU 사용 가능
   (아래 [MPS(Apple Silicon GPU) 사용](#mpsapple-silicon-gpu-사용) 참고)
@@ -137,7 +138,10 @@ flowchart TD
 │   ├── raw/                 # 원문(PDF/README/HTML) (scripts/download_papers.py로 생성, git 미포함)
 │   ├── processed/           # BM25 검색용 청크 jsonl (rag/ingest.py로 생성, git 미포함)
 │   └── eval/
-│       └── golden_questions.json   # 검색 품질 평가용 gold 질문셋
+│       ├── smoke_questions.json    # 검색 파이프라인 회귀 점검용 5문항
+│       ├── heldout_questions.json  # Retrieval 성능 평가용 Held-out 15문항
+│       ├── generation_cases.json   # Generation 평가용 Golden Rubric 3문항
+│       └── HELDOUT_GUIDE.md        # Held-out 질문 작성·관리 원칙
 ├── vectorstore/              # FAISS 색인 저장 디렉터리 (git 미포함)
 ├── agents/                   # Agent 모듈 (8개)
 │   ├── base.py                 # LLM 호출·프롬프트 로딩·외부 검색 tool-calling 루프·evidence 변환
@@ -161,8 +165,9 @@ flowchart TD
 │   └── workflow.py               # 그래프 조립 + 표적 재시도 라우팅
 ├── scripts/
 │   └── download_papers.py    # 코퍼스 4종 다운로드 (CORPUS_SOURCES 단일 출처)
-├── tests/                    # 재현 가능한 자동 테스트 (unittest, API 호출 없음)
-│   └── evaluate_retrieval.py    # Hit@K, MRR 평가 (data/eval/golden_questions.json 사용)
+├── tests/                    # 재현 가능한 자동 테스트 (unittest, 기본 실행은 API 호출 없음)
+│   ├── evaluate_retrieval.py    # smoke/held-out Hit@K, MRR 평가
+│   └── evaluate_generation.py   # Faithfulness, Answer Relevance 평가(API 비용 발생 가능)
 ├── outputs/                   # 평가 결과(최종 보고서 .md) 저장 (git 미포함)
 ├── technologies.py            # 비교 대상 기술 메타데이터 (Human 선정 결과)
 ├── rubrics.py                 # evaluation_rubric State에 주입되는 구조화된 Rubric
@@ -207,7 +212,15 @@ RUN_LIVE_TESTS=1 uv run python -m unittest tests.test_integration_live
 
 검색 품질(Hit@K, MRR)은 색인 후 별도로 평가한다:
 ```bash
-uv run python -m tests.evaluate_retrieval
+uv run python -m tests.evaluate_retrieval --dataset heldout
+```
+
+현재 Held-out 15문항 평가 결과는 **Hit Rate@1 0.533, Hit Rate@3 0.867,
+Hit Rate@5 0.867, MRR 0.678**이다. 검색 결과를 확인하며 정리한 5문항은 성능 평가가 아닌
+회귀 점검용 smoke 데이터셋으로만 사용한다.
+
+```bash
+uv run python -m tests.evaluate_retrieval --dataset smoke
 ```
 
 ### MPS(Apple Silicon GPU) 사용
