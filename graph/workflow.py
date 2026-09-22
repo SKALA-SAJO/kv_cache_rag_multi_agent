@@ -81,13 +81,28 @@ def route_after_faithfulness(state: GraphState):
     if retry_count >= max_retries:
         return "report_writer"
 
-    agents_to_retry = [
+    agents_to_retry = {
         name for name in check.get("agents_to_retry", []) if name in EVALUATION_AGENT_NODES
-    ]
+    }
     if not agents_to_retry:
         return "report_writer"
 
-    return [Send(name, dict(state)) for name in agents_to_retry]
+    # tech_research를 재실행하면 정적 엣지(tech_research -> 4관점 평가 Agent)를 타고
+    # 4개 평가 Agent가 어차피 다시 실행된다. 이 상태에서 그 중 하나를 또 Send로 직접
+    # 보내면 같은 라운드에 두 번 실행되어(한 번은 tech_research의 팬아웃으로, 한 번은
+    # 직접 Send로) synthesis/faithfulness_check/report_writer까지 중복 실행되는 버그가
+    # 있었다(2026-09-22 실제 API 실행에서 report_writer가 2번 도는 것으로 발견). 따라서
+    # tech_research가 재시도 대상이면 하위 4개는 명시적 Send 목록에서 제외한다.
+    if "tech_research" in agents_to_retry:
+        downstream = agents_to_retry & {
+            "trl_evaluation",
+            "market_evaluation",
+            "stakeholder_evaluation",
+            "domain_evaluation",
+        }
+        agents_to_retry -= downstream
+
+    return [Send(name, dict(state)) for name in sorted(agents_to_retry)]
 
 
 def build_graph():
