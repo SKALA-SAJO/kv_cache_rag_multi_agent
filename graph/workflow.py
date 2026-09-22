@@ -20,6 +20,10 @@ market_evaluation -> synthesis)를 그대로 타고 흘러 synthesis가 다시 �
 재실행하는 방식이라 나머지 3개를 다시 돌 필요가 없다).
 """
 
+import time
+from collections import defaultdict
+from typing import Callable
+
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 
@@ -37,6 +41,39 @@ from config import settings
 from graph.state import GraphState
 from rubrics import EVALUATION_RUBRIC
 from technologies import SELECTED_TECHNOLOGIES
+
+# 노드별 누적 실행 시간 (재시도로 같은 노드가 여러 번 실행되면 합산한다).
+_NODE_ELAPSED: dict[str, float] = defaultdict(float)
+_NODE_RUN_COUNT: dict[str, int] = defaultdict(int)
+
+
+def _timed(name: str, fn: Callable[[GraphState], dict]) -> Callable[[GraphState], dict]:
+    """Agent 실행 시간을 측정해 터미널에 출력하고, 요약용으로 누적한다."""
+
+    def wrapper(state: GraphState) -> dict:
+        start = time.perf_counter()
+        print(f"[timing] {name} 시작", flush=True)
+        try:
+            return fn(state)
+        finally:
+            elapsed = time.perf_counter() - start
+            _NODE_ELAPSED[name] += elapsed
+            _NODE_RUN_COUNT[name] += 1
+            print(f"[timing] {name} 완료 - {elapsed:.1f}초", flush=True)
+
+    return wrapper
+
+
+def print_timing_summary() -> None:
+    """실행 종료 후 단계별 누적 소요 시간을 표로 출력한다. app.py가 호출한다."""
+    if not _NODE_ELAPSED:
+        return
+    print("\n=== 단계별 실행 시간 요약 ===")
+    for name, total in sorted(_NODE_ELAPSED.items(), key=lambda kv: kv[1], reverse=True):
+        runs = _NODE_RUN_COUNT[name]
+        suffix = f" ({runs}회 실행 합계)" if runs > 1 else ""
+        print(f"  {name:<24} {total:7.1f}초{suffix}")
+    print(f"  {'합계(노드 실행 시간)':<24} {sum(_NODE_ELAPSED.values()):7.1f}초")
 
 # 재검색 대상이 될 수 있는 Agent 노드 (evidence_items를 만드는 Agent 전체).
 # PDF 표는 evidence_items 생성 Agent로 기술조사·시장·이해관계자·도메인만 명시하지만,
@@ -109,14 +146,16 @@ def build_graph():
     graph = StateGraph(GraphState)
 
     graph.add_node("init", init_node)
-    graph.add_node("tech_research", tech_research.run)
-    graph.add_node("trl_evaluation", trl_evaluation.run)
-    graph.add_node("market_evaluation", market_evaluation.run)
-    graph.add_node("stakeholder_evaluation", stakeholder_evaluation.run)
-    graph.add_node("domain_evaluation", domain_evaluation.run)
-    graph.add_node("synthesis", synthesis_agent.run)
-    graph.add_node("faithfulness_check", faithfulness_check.run)
-    graph.add_node("report_writer", report_writer.run)
+    graph.add_node("tech_research", _timed("tech_research", tech_research.run))
+    graph.add_node("trl_evaluation", _timed("trl_evaluation", trl_evaluation.run))
+    graph.add_node("market_evaluation", _timed("market_evaluation", market_evaluation.run))
+    graph.add_node(
+        "stakeholder_evaluation", _timed("stakeholder_evaluation", stakeholder_evaluation.run)
+    )
+    graph.add_node("domain_evaluation", _timed("domain_evaluation", domain_evaluation.run))
+    graph.add_node("synthesis", _timed("synthesis", synthesis_agent.run))
+    graph.add_node("faithfulness_check", _timed("faithfulness_check", faithfulness_check.run))
+    graph.add_node("report_writer", _timed("report_writer", report_writer.run))
 
     graph.set_entry_point("init")
     graph.add_edge("init", "tech_research")
