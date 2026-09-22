@@ -33,6 +33,12 @@ CAPTION_PATTERN = re.compile(
     r"^\s*(?:figure|fig\.?|table|그림|표)\s*\d+[\s.:：-]",
     re.IGNORECASE,
 )
+SECTION_HEADING_PATTERN = re.compile(
+    r"^\s*(?:#{1,6}\s+|(?:\d+(?:\.\d+)*|[IVXLC]+)\.?\s+|"
+    r"(?:abstract|introduction|background|method|methods|experiment(?:s)?|"
+    r"results?|conclusion|references|appendix)\b)",
+    re.IGNORECASE,
+)
 
 
 class _HTMLTextExtractor(HTMLParser):
@@ -74,20 +80,33 @@ def _base_metadata(source: CorpusSource) -> dict[str, str]:
     }
 
 
+def _infer_section(text: str, fallback: str = "document") -> str:
+    """문서 페이지·본문에서 식별 가능한 첫 섹션 제목을 출처 메타데이터로 남긴다."""
+    for line in text.splitlines():
+        candidate = re.sub(r"\s+", " ", line).strip()
+        if SECTION_HEADING_PATTERN.match(candidate):
+            return candidate[:160]
+    return fallback
+
+
 def _load_html(path: Path, source: CorpusSource) -> list[Document]:
     parser = _HTMLTextExtractor()
     parser.feed(path.read_text(encoding="utf-8", errors="ignore"))
     text = parser.text()
     if not text:
         raise ValueError(f"{path}에서 색인할 텍스트를 추출하지 못했습니다.")
-    return [Document(page_content=text, metadata=_base_metadata(source))]
+    metadata = _base_metadata(source)
+    metadata["section"] = _infer_section(text, fallback="web_document")
+    return [Document(page_content=text, metadata=metadata)]
 
 
 def _load_markdown(path: Path, source: CorpusSource) -> list[Document]:
     text = path.read_text(encoding="utf-8", errors="ignore")
     if not text.strip():
         raise ValueError(f"{path}가 비어 있습니다.")
-    return [Document(page_content=text, metadata=_base_metadata(source))]
+    metadata = _base_metadata(source)
+    metadata["section"] = _infer_section(text, fallback="document")
+    return [Document(page_content=text, metadata=metadata)]
 
 
 def _load_pdf(path: Path, source: CorpusSource) -> list[Document]:
@@ -98,6 +117,10 @@ def _load_pdf(path: Path, source: CorpusSource) -> list[Document]:
         # PyPDFLoader page 값은 0-base이므로 보고서 출처에는 1-base로 기록한다.
         if "page" in page.metadata:
             page.metadata["page"] = page.metadata["page"] + 1
+        page.metadata["section"] = _infer_section(
+            page.page_content,
+            fallback=f"page {page.metadata.get('page', '?')}",
+        )
     return pages
 
 
