@@ -2,7 +2,7 @@
 name = "kv-cache-rag-multi-agent"
 version = "0.1.0"
 description = "KV Cache 최적화 기술 다관점 평가 Multi-Agent RAG 시스템"
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 dependencies = [
     "faiss-cpu>=1.8.0",
     "langchain>=1.0.0",

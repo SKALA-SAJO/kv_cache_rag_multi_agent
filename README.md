@@ -152,8 +152,8 @@ flowchart TD
 
 
 ## Usage
-[uv](https://docs.astral.sh/uv/) 로 의존성·Python 버전을 관리함. (`.python-version`이 3.14를 고정하며,
-`uv`가 없으면 필요한 인터프리터를 자동으로 내려받음)
+[uv](https://docs.astral.sh/uv/) 로 의존성·Python 버전을 관리함. (`.python-version`이 3.11을 고정하며,
+로컬에 없으면 `uv`가 필요한 인터프리터를 자동으로 내려받음)
 
 ```bash
 uv sync                             # .venv 생성 + 의존성 설치 (pyproject.toml/uv.lock 기준)
