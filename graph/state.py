@@ -46,12 +46,19 @@ def dedupe_references(existing: list[dict], new: list[dict]) -> list[dict]:
 
 
 def dedupe_evidence_items(existing: list[dict], new: list[dict]) -> list[dict]:
-    """evidence_items 리듀서: document_id/source_url + 페이지·섹션 + 인용문 앞부분 기준 중복 제거."""
+    """evidence_items 리듀서: agent + document_id/source_url + 페이지·섹션 + 인용문 앞부분
+
+    기준 중복 제거. agent를 키에 넣지 않으면 서로 다른 Agent(예: market_evaluation과
+    stakeholder_evaluation)가 같은 URL/내용을 인용했을 때 한쪽 Agent의 근거가 통째로
+    사라져서, faithfulness_check의 실패 claim -> 출처 Agent 귀속이 틀어진다(실제 mock
+    테스트에서 재현·발견됨).
+    """
     combined = existing + new
     seen: set = set()
     result: list[dict] = []
     for item in combined:
         key = (
+            item.get("agent"),
             item.get("document_id") or item.get("source_url"),
             item.get("page_or_section"),
             (item.get("evidence_quote") or "")[:80],
