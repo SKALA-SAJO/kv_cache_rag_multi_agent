@@ -61,6 +61,9 @@ REFERENCE
   score**를 쓰고, 시장성·이해관계자·도메인 적합성은 **level**("근거 부족"/"근거 제한적"/
   "근거 충분") 3단계 라벨을 쓴다 — 이 둘을 같은 척도인 것처럼 섞어 쓰지 않는다.
   insufficient_evidence=true인 항목은 score/level 대신 "정보 부족"으로 표기한다.
+- 3.1(Agent별 역할)에서는 payload의 `agent_definitions`에 있는 8개 Agent 이름만 사용한다.
+  - "Retrieval Agent", "Connector Agent" 같은 코드를 기반으로 하지 않은 Agent 명칭을 새로
+    만들지 않는다.
 - 5장은 synthesis의 agreements/conflicts/favorable_conditions를 그대로 반영하되, 특정 기술을
   최종 승자로 선언하는 문장을 쓰지 않는다.
 - faithfulness_check에서 status="fail"로 판정된 claim은 본문에 포함하지 않거나, 포함할 경우
