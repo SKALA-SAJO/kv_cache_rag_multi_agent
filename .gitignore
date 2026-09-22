@@ -1,9 +1,17 @@
+.python-version
 __pycache__/
 *.pyc
 .venv/
 venv/
 
 .env
+.env.*
+
+.DS_Store
+.vscode/
+
+pyproject.toml
+uv.lock
 
 vectorstore/*
 !vectorstore/.gitkeep
@@ -16,7 +24,5 @@ data/raw/*
 
 outputs/*
 !outputs/.gitkeep
-
-.DS_Store
 
 sample.pdf

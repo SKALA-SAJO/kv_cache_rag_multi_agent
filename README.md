@@ -8,7 +8,7 @@
 ## Overview
 - Objective : KV Cache 병목을 해결하는 서로 다른 접근(SW/HW)의 두 기술을 복수 관점에서 비교 평가
 - Method : Multi-Agent(Distributed) + Agentic RAG (LangGraph 기반, 8개 Agent + Faithfulness 검증 루프)
-- Tools : LangGraph, LangChain, OpenAI GPT, Chroma, BAAI/bge-m3, BAAI/bge-reranker-base
+- Tools : LangGraph, LangChain, OpenAI GPT, FAISS, BAAI/bge-m3, BAAI/bge-reranker-base
 
 
 ## Selected Technologies
@@ -38,7 +38,7 @@
 - Framework : LangGraph
 - LLM/Generator : OpenAI GPT (`GENERATOR_MODEL`, 기본값 `gpt-4.1-mini`)
 - LLM/Judge : OpenAI GPT (`JUDGE_MODEL`, Faithfulness Check 전용, 기본값 `gpt-4.1-mini`)
-- Retrieval : Chroma(Dense) + BM25(Sparse) Hybrid Retrieval(Top-20~30) → BAAI/bge-reranker-base
+- Retrieval : FAISS(Dense) + BM25(Sparse) Hybrid Retrieval(Top-20~30) → BAAI/bge-reranker-base
   Cross-encoder 재정렬(Top-5~8)
 - Embedding : BAAI/bge-m3 (다국어·긴 입력·Dense/Sparse 지원)
 
@@ -118,7 +118,7 @@ flowchart TD
 ├── data/
 │   ├── raw/                # 기술 문서 원본 PDF (scripts/download_papers.py로 생성, git 미포함)
 │   └── processed/          # BM25 검색용 청크 jsonl (rag/ingest.py로 생성, git 미포함)
-├── vectorstore/             # Chroma 영구 저장 디렉터리 (git 미포함)
+├── vectorstore/             # FAISS 색인 저장 디렉터리 (git 미포함)
 ├── agents/                  # Agent 모듈 (8개)
 │   ├── base.py               # LLM 호출·프롬프트 로딩·문서 포맷 공통 유틸
 │   ├── schemas.py             # Agent 구조화 출력 Pydantic 스키마
@@ -144,24 +144,27 @@ flowchart TD
 ├── technologies.py           # 비교 대상 기술 메타데이터 (Human 선정 결과)
 ├── config.py                 # 환경설정 (.env 로딩)
 ├── app.py                    # 실행 스크립트
-├── requirements.txt
+├── pyproject.toml            # 의존성 정의 (uv 관리, git 미포함)
+├── uv.lock                   # 잠금 파일 (uv 관리, git 미포함)
 ├── .env.example
 └── README.md
 ```
 
 
 ## Usage
+[uv](https://docs.astral.sh/uv/) 로 의존성·Python 버전을 관리함. (`.python-version`이 3.14를 고정하며,
+`uv`가 없으면 필요한 인터프리터를 자동으로 내려받음)
+
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+uv sync                             # .venv 생성 + 의존성 설치 (pyproject.toml/uv.lock 기준)
 
-cp .env.example .env        # OPENAI_API_KEY 입력 필수
+cp .env.example .env                # OPENAI_API_KEY 입력 필수
 
-python -m scripts.download_papers   # 기술 문서 RAG 코퍼스 다운로드 (arXiv)
-python -m rag.ingest                # Chroma 색인 + BM25용 청크 생성
+uv run python -m scripts.download_papers   # 기술 문서 RAG 코퍼스 다운로드 (arXiv)
+uv run python -m rag.ingest                # FAISS 색인 + BM25용 청크 생성
 
-python app.py                       # 기본 평가 질문으로 실행
-python app.py --question "..."      # 커스텀 질문으로 실행
+uv run python app.py                       # 기본 평가 질문으로 실행
+uv run python app.py --question "..."      # 커스텀 질문으로 실행
 ```
 실행 결과 최종 보고서는 콘솔에 출력되고 `outputs/report_{timestamp}.md`로 저장됨.
 

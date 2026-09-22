@@ -1,6 +1,6 @@
 """Hybrid Retrieval + Rerank (RAG-Design PDF B.2 절).
 
-1차: Dense(Chroma/bge-m3) + Sparse(BM25) 결합 Hybrid Retrieval (Top-20~30)
+1차: Dense(FAISS/bge-m3) + Sparse(BM25) 결합 Hybrid Retrieval (Top-20~30)
 2차: Cross-encoder(BAAI/bge-reranker-base) 재정렬 후 Top-5~8만 최종 컨텍스트로 사용
 
 기술 문서(DeepSeek-V2, InfiniGen 논문) RAG 검색 전용 모듈이다. 다른 관점
@@ -12,15 +12,14 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 
-from langchain_chroma import Chroma
 from langchain_classic.retrievers import EnsembleRetriever
 from langchain_community.retrievers import BM25Retriever
+from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from sentence_transformers import CrossEncoder
 
 from config import settings
 from rag.embeddings import get_embeddings
-from rag.ingest import COLLECTION_NAME
 
 
 def _load_chunks() -> list[Document]:
@@ -37,11 +36,17 @@ def _load_chunks() -> list[Document]:
 
 
 @lru_cache(maxsize=1)
-def _vectorstore() -> Chroma:
-    return Chroma(
-        collection_name=COLLECTION_NAME,
-        embedding_function=get_embeddings(),
-        persist_directory=str(settings.vectorstore_path),
+def _vectorstore() -> FAISS:
+    if not (settings.vectorstore_path / "index.faiss").exists():
+        raise RuntimeError(
+            f"{settings.vectorstore_path} 에 FAISS 색인이 없습니다. "
+            "먼저 `python -m rag.ingest` 를 실행하세요."
+        )
+    # 로컬에서 우리가 직접 만든 색인만 불러오므로 pickle 역직렬화 위험을 허용한다.
+    return FAISS.load_local(
+        str(settings.vectorstore_path),
+        get_embeddings(),
+        allow_dangerous_deserialization=True,
     )
 
 
