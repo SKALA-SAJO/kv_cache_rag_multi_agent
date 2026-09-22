@@ -12,6 +12,8 @@ _normalize_search_results가 별도 어댑터 없이 그대로 처리한다.
 
 from __future__ import annotations
 
+import os
+
 from langchain_tavily import TavilySearch
 
 from agents.base import register_external_search_tool
@@ -24,11 +26,14 @@ def register() -> None:
     키가 없으면 아무것도 등록하지 않는다 — get_external_search_tool()이 계속 None을
     반환하므로 시장/이해관계자 평가 Agent는 검색 없이 정직하게 '정보 부족'으로
     처리한다(근거를 지어내지 않는다는 기존 원칙 유지).
+
+    TavilySearch에는 ``api_key`` 생성자 인자가 없다(내부 TavilySearchAPIWrapper가
+    os.environ["TAVILY_API_KEY"]를 직접 읽는다) — 그래서 os.environ에 명시적으로
+    반영한다. app.py가 load_dotenv()를 먼저 호출해두면 이미 채워져 있어 사실상
+    no-op이지만, register()를 다른 진입점에서 단독 호출해도 안전하도록 명시했다.
     """
     if not settings.tavily_api_key:
         return
-    tool = TavilySearch(
-        max_results=settings.external_search_max_results,
-        api_key=settings.tavily_api_key,
-    )
+    os.environ.setdefault("TAVILY_API_KEY", settings.tavily_api_key)
+    tool = TavilySearch(max_results=settings.external_search_max_results)
     register_external_search_tool(tool)
