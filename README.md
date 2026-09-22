@@ -47,6 +47,7 @@
 - LLM/Judge : OpenAI GPT (`JUDGE_MODEL`, Faithfulness Check 전용, 기본값 `gpt-5-mini`)
 - Retrieval : FAISS(Dense) + BM25(Sparse) Hybrid Retrieval(RRF 결합, Top-20-30) →
   BAAI/bge-reranker-v2-m3 Cross-encoder 재정렬(Top-5-8). `doc_type`/`technology` 필터링 지원
+  - Held-out 15문항 평가: **Hit Rate@1 0.533, Hit Rate@3 0.867, Hit Rate@5 0.867, MRR 0.678**
 - Embedding : BAAI/bge-m3 (다국어·긴 입력·Dense/Sparse 지원). 기본 연산 장치는 `cpu`(팀
   전체 호환), Apple Silicon 사용자는 `EMBEDDING_DEVICE=mps`로 개인 설정 시 GPU 사용 가능
   (아래 [MPS(Apple Silicon GPU) 사용](#mpsapple-silicon-gpu-사용) 참고)
@@ -205,8 +206,14 @@ pandoc 등 시스템 설치 없이 `uv sync`만으로 동작(순수 Python + 리
 ```bash
 uv run python -m unittest discover -s tests -v   # 전체 테스트 (API 호출 없음, 네트워크 불필요)
 ```
-실제 API를 쓰는 통합 테스트, Retrieval 품질(Hit@K/MRR) 평가, Generation 품질(Faithfulness/
-Answer Relevance) 평가 실행법은 [`tests/README.md`](./tests/README.md)에 정리되어 있다.
+실제 API를 쓰는 통합 테스트, Generation 품질(Faithfulness/Answer Relevance) 평가 실행법은
+[`tests/README.md`](./tests/README.md)에 정리되어 있다.
+
+Retrieval 품질(Tech Stack 절의 Held-out 15문항 결과 참고)은 색인 후 다시 측정할 수 있다
+(smoke 5문항은 회귀 점검용, heldout 15문항이 성능 평가용):
+```bash
+uv run python -m tests.evaluate_retrieval --dataset heldout
+```
 
 ### MPS(Apple Silicon GPU) 사용
 기본값은 `EMBEDDING_DEVICE=cpu`다 — 팀 전체(비-Apple Silicon 포함)가 항상 같은 조건으로
