@@ -23,10 +23,11 @@ class Settings(BaseSettings):
 
     embedding_model: str = "BAAI/bge-m3"
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
-    # LangGraph가 4관점 평가 Agent를 병렬(멀티스레드)로 실행하는데, 그중 기술 성숙도·도메인
-    # 평가 Agent가 동시에 reranker/embedding을 호출한다. PyTorch의 MPS(Apple GPU) 백엔드는
-    # 동시 추론이 스레드 안전하지 않아 세그폴트가 발생하므로 기본값은 "cpu"로 둔다.
-    # CUDA 환경 등에서는 .env에서 변경 가능.
+    # 기본값은 팀 전체(비-Apple Silicon 포함)에서 항상 동작하는 "cpu". rag/embeddings.py의
+    # MODEL_CALL_LOCK이 임베딩·재정렬 호출을 직렬화해 동시 호출 세그폴트를 막으므로,
+    # Apple Silicon 사용자는 본인 .env에서만 EMBEDDING_DEVICE=mps로 바꿔 안전하게 GPU를
+    # 쓸 수 있다(다만 전체 실행 시간은 로컬 연산보다 LLM API 왕복이 지배적이라 체감
+    # 효과는 크지 않을 수 있음). CUDA 환경도 동일하게 .env에서 변경.
     embedding_device: str = "cpu"
 
     retrieval_top_k_candidates: int = 25

@@ -23,7 +23,7 @@ from langchain_core.documents import Document
 from sentence_transformers import CrossEncoder
 
 from config import settings
-from rag.embeddings import get_embeddings
+from rag.embeddings import MODEL_CALL_LOCK, get_embeddings
 
 DocTypeFilter = str | tuple[str, ...] | None
 _MetadataPredicate = Callable[[dict[str, Any]], bool]
@@ -162,6 +162,9 @@ def retrieve(
             unique_candidates.append(doc)
 
     pairs = [(query, doc.page_content) for doc in unique_candidates]
-    scores = _reranker().predict(pairs)
+    # rag/embeddings.py의 MODEL_CALL_LOCK 공유: 재정렬도 같은 GPU(MPS)를 쓰므로
+    # 임베딩 호출과도 상호 배제되어야 한다.
+    with MODEL_CALL_LOCK:
+        scores = _reranker().predict(pairs)
     ranked = sorted(zip(scores, unique_candidates), key=lambda pair: pair[0], reverse=True)
     return [doc for _, doc in ranked[:top_k]]
