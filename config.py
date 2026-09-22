@@ -18,8 +18,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     tavily_api_key: str = ""
 
-    generator_model: str = "gpt-4.1-mini"
-    judge_model: str = "gpt-4.1-mini"
+    generator_model: str = "gpt-5-mini"
+    judge_model: str = "gpt-5-mini"
 
     embedding_model: str = "BAAI/bge-m3"
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
