@@ -1,0 +1,42 @@
+[
+  {
+    "id": "deepseek_mla_abstract",
+    "question": "DeepSeek-V2 MLA는 KV Cache 효율을 높이기 위해 어떤 핵심 접근을 사용하는가?",
+    "expected_chunk_id": "deepseek_v2_mla-p1-text-0",
+    "expected_source": "deepseek_v2_mla.pdf",
+    "doc_types": ["technical_paper"],
+    "technology": "DeepSeek-V2 MLA"
+  },
+  {
+    "id": "infinigen_prefetch",
+    "question": "InfiniGen은 필요한 KV Cache를 어떻게 관리하고 prefetch하는가?",
+    "expected_chunk_id": "infinigen-p4-text-0",
+    "expected_source": "infinigen.pdf",
+    "doc_types": ["technical_paper"],
+    "technology": "InfiniGen"
+  },
+  {
+    "id": "longbench_purpose",
+    "question": "LongBench는 장문맥 모델의 어떤 능력을 평가하기 위한 벤치마크인가?",
+    "expected_chunk_id": "longbench-p1-text-0",
+    "expected_source": "longbench.pdf",
+    "doc_types": ["domain_benchmark"],
+    "technology": null
+  },
+  {
+    "id": "ruler_purpose",
+    "question": "RULER는 언어 모델의 실제 컨텍스트 길이를 어떤 관점에서 검증하는가?",
+    "expected_chunk_id": "ruler-p1-text-0",
+    "expected_source": "ruler.pdf",
+    "doc_types": ["domain_benchmark"],
+    "technology": null
+  },
+  {
+    "id": "gemini_long_context",
+    "question": "Gemini API 문서에서 긴 컨텍스트 사용 시 설명하는 대표적인 활용 사례는 무엇인가?",
+    "expected_chunk_id": "gemini_long_context-pdocument-text-2",
+    "expected_source": "gemini_long_context.html",
+    "doc_types": ["market_document"],
+    "technology": null
+  }
+]
