@@ -13,13 +13,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+
+ROOT = Path(__file__).resolve().parents[1]
+
+# app.py와 동일하게 .env를 명시적으로 우선 적용한다. 그렇지 않으면 이전 터미널 세션에서
+# export된 오래된 OPENAI_API_KEY가 pydantic-settings의 .env 값보다 우선해 Generation
+# 평가만 401 오류로 실패할 수 있다.
+load_dotenv(ROOT / ".env", override=True)
 
 from agents.base import load_prompt, structured_call
 from config import settings
 
 
-ROOT = Path(__file__).resolve().parents[1]
 CASES_PATH = ROOT / "data" / "eval" / "generation_cases.json"
 SYSTEM_PROMPT = load_prompt("generation_evaluator")
 
