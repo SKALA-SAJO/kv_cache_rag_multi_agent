@@ -41,6 +41,65 @@ GRAPH_DESIGN_NOTE = (
 
 def run(state: GraphState) -> dict:
     payload = {
+        "agent_definitions": [
+            {
+                "node": "tech_research",
+                "name": "기술 조사 Agent",
+                "rag": True,
+                "output": "technical_evidence",
+            },
+            {
+                "node": "trl_evaluation",
+                "name": "기술 성숙도 평가 Agent",
+                "rag": True,
+                "output": "trl_evaluation",
+            },
+            {
+                "node": "market_evaluation",
+                "name": "시장 평가 Agent",
+                "rag": True,
+                "output": "market_evaluation",
+            },
+            {
+                "node": "stakeholder_evaluation",
+                "name": "이해관계자 평가 Agent",
+                "rag": False,
+                "output": "stakeholder_evaluation",
+            },
+            {
+                "node": "domain_evaluation",
+                "name": "도메인 평가 Agent",
+                "rag": True,
+                "output": "domain_evaluation",
+            },
+            {
+                "node": "synthesis",
+                "name": "평가 종합 Agent",
+                "rag": False,
+                "output": "synthesis",
+            },
+            {
+                "node": "faithfulness_check",
+                "name": "검증 Agent (Faithfulness Check)",
+                "rag": False,
+                "output": "faithfulness_check",
+            },
+            {
+                "node": "report_writer",
+                "name": "보고서 생성 Agent",
+                "rag": False,
+                "output": "final_report",
+            },
+        ],
+        "run_config": {
+            "generator_model": settings.generator_model,
+            "judge_model": settings.judge_model,
+            "embedding_model": settings.embedding_model,
+            "reranker_model": settings.reranker_model,
+            "embedding_device": settings.embedding_device,
+            "retrieval_top_k_candidates": settings.retrieval_top_k_candidates,
+            "retrieval_top_k_final": settings.retrieval_top_k_final,
+        },
         "research_question": state.get("research_question"),
         "selected_technologies": state.get("selected_technologies"),
         "technical_evidence": state.get("technical_evidence"),
