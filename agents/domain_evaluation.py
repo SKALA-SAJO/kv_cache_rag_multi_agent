@@ -6,6 +6,8 @@
   컨텍스트로 제공한다.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+
 from langchain_core.documents import Document
 
 from agents.base import (
@@ -58,6 +60,40 @@ def _retrieve_domain_corpus(retry_hint: str = "") -> list[Document]:
     return _dedup_documents(docs)
 
 
+def _process_technology(
+    tech_name: str,
+    technical_evidence: dict,
+    domain_docs: list[Document],
+    retry_hint: str,
+) -> tuple[str, dict, list[Document], list[dict]]:
+    """기술 하나를 독립적으로 평가한다. domain_docs는 두 기술이 공유하는 읽기 전용
+    자료이며, 기술 간 판단 참조는 없으므로 기술별로 병렬 실행해도 결과는 순차 실행과
+    동일하다."""
+    query = f"{tech_name} 장문맥 long context 컨텍스트 길이 메모리 효율 정확도 지연"
+    if retry_hint:
+        query = f"{query} {retry_hint}"
+    tech_docs = retrieve(
+        query,
+        doc_types=DOC_TYPE_TECHNICAL_PAPER,
+        technology=tech_name,
+    )
+    evidence_items = documents_to_evidence_items(
+        tech_docs,
+        agent=AGENT_NAME,
+        claim=f"{tech_name} 장문맥 처리 애플리케이션 적합성 근거",
+    )
+
+    docs_for_context = _dedup_documents([*tech_docs, *domain_docs])
+    context = format_context(docs_for_context)
+    user_content = (
+        f"## 기술명\n{tech_name}\n\n"
+        f"## 기술 조사 Agent 요약\n{technical_evidence.get(tech_name, {})}\n\n"
+        f"## Context\n{context}"
+    )
+    result = structured_call(QualitativeAssessment, SYSTEM_PROMPT, user_content)
+    return tech_name, result.model_dump(), tech_docs, evidence_items
+
+
 def run(state: GraphState) -> dict:
     technologies = state["selected_technologies"]
     technical_evidence = state.get("technical_evidence", {})
@@ -66,7 +102,8 @@ def run(state: GraphState) -> dict:
     all_evidence_items: list[dict] = []
     result_by_tech: dict = {}
 
-    # Domain corpus: LongBench/RULER (기술과 무관한 '도메인 정의/평가 근거')
+    # Domain corpus: LongBench/RULER (기술과 무관한 '도메인 정의/평가 근거') — 두 기술이
+    # 공유하는 1회성 검색이라 병렬화 대상이 아니다.
     domain_docs = _retrieve_domain_corpus(retry_hint=retry_hint)
     all_docs.extend(domain_docs)
     all_evidence_items.extend(
@@ -77,33 +114,20 @@ def run(state: GraphState) -> dict:
         )
     )
 
-    for tech_name in technologies:
-        query = f"{tech_name} 장문맥 long context 컨텍스트 길이 메모리 효율 정확도 지연"
-        if retry_hint:
-            query = f"{query} {retry_hint}"
-        tech_docs = retrieve(
-            query,
-            doc_types=DOC_TYPE_TECHNICAL_PAPER,
-            technology=tech_name,
-        )
-        all_docs.extend(tech_docs)
-        all_evidence_items.extend(
-            documents_to_evidence_items(
-                tech_docs,
-                agent=AGENT_NAME,
-                claim=f"{tech_name} 장문맥 처리 애플리케이션 적합성 근거",
+    # 기술 간 참조가 없는 독립 작업이므로 병렬 실행한다. 제출 순서대로 결과를 모아
+    # (완료 순서가 아님) 순차 실행과 동일한 병합 순서를 보장한다.
+    with ThreadPoolExecutor(max_workers=len(technologies) or 1) as executor:
+        futures = [
+            executor.submit(
+                _process_technology, tech_name, technical_evidence, domain_docs, retry_hint
             )
-        )
-
-        docs_for_context = _dedup_documents([*tech_docs, *domain_docs])
-        context = format_context(docs_for_context)
-        user_content = (
-            f"## 기술명\n{tech_name}\n\n"
-            f"## 기술 조사 Agent 요약\n{technical_evidence.get(tech_name, {})}\n\n"
-            f"## Context\n{context}"
-        )
-        result = structured_call(QualitativeAssessment, SYSTEM_PROMPT, user_content)
-        result_by_tech[tech_name] = result.model_dump()
+            for tech_name in technologies
+        ]
+        for future in futures:
+            tech_name, result_dump, tech_docs, evidence_items = future.result()
+            result_by_tech[tech_name] = result_dump
+            all_docs.extend(tech_docs)
+            all_evidence_items.extend(evidence_items)
 
     return {
         "retrieved_documents": all_docs,

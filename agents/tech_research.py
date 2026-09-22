@@ -7,6 +7,8 @@ sample.pdf B.3/D.1에 따라 기술 원문과 공식 구현자료(GitHub README)
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from langchain_core.documents import Document
 
 from agents.base import (
@@ -101,6 +103,51 @@ def _retrieve_corpora(
     return paper_docs, implementation_docs
 
 
+def _process_technology(
+    tech_name: str, tech_info: dict, retry_hint: str
+) -> tuple[str, dict, list[Document], list[dict]]:
+    """기술 하나를 독립적으로 조사한다. 다른 기술의 조사 결과를 참조하지 않으므로
+    기술별로 병렬 실행해도 각 기술의 입력·출력은 순차 실행과 동일하다."""
+    paper_docs, implementation_docs = _retrieve_corpora(
+        tech_name,
+        tech_info["core_approach"],
+        retry_hint,
+    )
+    docs = _deduplicate_documents(paper_docs + implementation_docs)
+    paper_items = documents_to_evidence_items(
+        paper_docs,
+        agent=AGENT_NAME,
+        claim=f"{tech_name} 원리·성능·한계·실험 조건 근거",
+    )
+    implementation_items = documents_to_evidence_items(
+        implementation_docs,
+        agent=AGENT_NAME,
+        claim=f"{tech_name} 공개 구현·재현 조건 근거",
+    )
+    for item in implementation_items:
+        item["limitation"] = (
+            "공식 README의 자체 기술 내용이며 실제 운용·독립 재현을 직접 입증하지 않음"
+        )
+    evidence_items = paper_items + implementation_items
+
+    paper_context = (
+        format_context(paper_docs) if paper_docs else "Context 내 기술 원문 근거 없음"
+    )
+    implementation_context = (
+        format_context(implementation_docs)
+        if implementation_docs
+        else "Context 내 공식 구현자료 근거 없음"
+    )
+    user_content = (
+        f"## 기술명\n{tech_name}\n\n"
+        f"## 핵심 접근 (Human 선정 근거)\n{tech_info['core_approach']}\n\n"
+        f"## 기술 원문 Context\n{paper_context}\n\n"
+        f"## 공식 구현자료 Context\n{implementation_context}"
+    )
+    result = structured_call(TechEvidence, SYSTEM_PROMPT, user_content)
+    return tech_name, result.model_dump(), docs, evidence_items
+
+
 def run(state: GraphState) -> dict:
     technologies = state["selected_technologies"]
     retry_hint = state.get("retry_hints", {}).get(AGENT_NAME, "")
@@ -108,48 +155,18 @@ def run(state: GraphState) -> dict:
     all_evidence_items: list[dict] = []
     evidence: dict = {}
 
-    for tech_name, tech_info in technologies.items():
-        paper_docs, implementation_docs = _retrieve_corpora(
-            tech_name,
-            tech_info["core_approach"],
-            retry_hint,
-        )
-        docs = _deduplicate_documents(paper_docs + implementation_docs)
-        all_docs.extend(docs)
-        paper_items = documents_to_evidence_items(
-            paper_docs,
-            agent=AGENT_NAME,
-            claim=f"{tech_name} 원리·성능·한계·실험 조건 근거",
-        )
-        implementation_items = documents_to_evidence_items(
-            implementation_docs,
-            agent=AGENT_NAME,
-            claim=f"{tech_name} 공개 구현·재현 조건 근거",
-        )
-        for item in implementation_items:
-            item["limitation"] = (
-                "공식 README의 자체 기술 내용이며 실제 운용·독립 재현을 직접 입증하지 않음"
-            )
-        all_evidence_items.extend(paper_items + implementation_items)
-
-        paper_context = (
-            format_context(paper_docs)
-            if paper_docs
-            else "Context 내 기술 원문 근거 없음"
-        )
-        implementation_context = (
-            format_context(implementation_docs)
-            if implementation_docs
-            else "Context 내 공식 구현자료 근거 없음"
-        )
-        user_content = (
-            f"## 기술명\n{tech_name}\n\n"
-            f"## 핵심 접근 (Human 선정 근거)\n{tech_info['core_approach']}\n\n"
-            f"## 기술 원문 Context\n{paper_context}\n\n"
-            f"## 공식 구현자료 Context\n{implementation_context}"
-        )
-        result = structured_call(TechEvidence, SYSTEM_PROMPT, user_content)
-        evidence[tech_name] = result.model_dump()
+    # 기술 간 참조가 없는 독립 작업이므로 병렬 실행한다. 제출 순서대로 결과를 모아
+    # (완료 순서가 아님) 순차 실행과 동일한 병합 순서를 보장한다.
+    with ThreadPoolExecutor(max_workers=len(technologies) or 1) as executor:
+        futures = [
+            executor.submit(_process_technology, tech_name, tech_info, retry_hint)
+            for tech_name, tech_info in technologies.items()
+        ]
+        for future in futures:
+            tech_name, result_dump, docs, evidence_items = future.result()
+            evidence[tech_name] = result_dump
+            all_docs.extend(docs)
+            all_evidence_items.extend(evidence_items)
 
     # 기술별 검색 결과가 서로 겹칠 수 있으므로 State reducer에 넘기기 전에 다시 제거한다.
     all_docs = _deduplicate_documents(all_docs)

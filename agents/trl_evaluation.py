@@ -4,6 +4,10 @@
 비대칭(1~3 학술자료, 4~6 영업비밀, 7~9 수율·원가/운영정보)을 평가 한계에 남긴다.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+
+from langchain_core.documents import Document
+
 from agents.base import (
     documents_to_evidence_items,
     documents_to_references,
@@ -42,6 +46,53 @@ def _trl_information_gap(score: int | None) -> str:
     )
 
 
+def _process_technology(
+    tech_name: str, tech_info: dict, technical_evidence: dict, retry_hint: str
+) -> tuple[str, dict, list[Document], list[dict]]:
+    """기술 하나를 독립적으로 평가한다. 다른 기술의 TRL 판단을 참조하지 않으므로
+    기술별로 병렬 실행해도 각 기술의 입력·출력은 순차 실행과 동일하다."""
+    paper_docs, implementation_docs = _retrieve_corpora(
+        tech_name,
+        tech_info["core_approach"],
+        retry_hint,
+    )
+    docs = _deduplicate_documents(paper_docs + implementation_docs)
+
+    paper_context = (
+        format_context(paper_docs) if paper_docs else "Context 내 기술 원문 근거 없음"
+    )
+    implementation_context = (
+        format_context(implementation_docs)
+        if implementation_docs
+        else "Context 내 공식 구현자료 근거 없음"
+    )
+    user_content = (
+        f"## 기술명\n{tech_name}\n\n"
+        f"## 기술 조사 Agent 요약\n{technical_evidence.get(tech_name, {})}\n\n"
+        f"## 기술 원문 Context\n{paper_context}\n\n"
+        f"## 공식 구현자료 Context\n{implementation_context}"
+    )
+    result = structured_call(TRLAssessment, SYSTEM_PROMPT, user_content)
+    information_gap = _trl_information_gap(result.score)
+    existing_limitations = (result.limitations or "").strip()
+    if information_gap not in existing_limitations:
+        result.limitations = f"{existing_limitations} {information_gap}".strip()
+
+    evidence_items = documents_to_evidence_items(
+        docs,
+        agent=AGENT_NAME,
+        claim=(
+            f"{tech_name} TRL {result.score} 판단 근거"
+            if result.score is not None
+            else f"{tech_name} TRL 정보 부족 판단 근거"
+        ),
+    )
+    for item in evidence_items:
+        item["limitation"] = information_gap
+
+    return tech_name, result.model_dump(), docs, evidence_items
+
+
 def run(state: GraphState) -> dict:
     technologies = state["selected_technologies"]
     technical_evidence = state.get("technical_evidence", {})
@@ -50,50 +101,20 @@ def run(state: GraphState) -> dict:
     all_evidence_items: list[dict] = []
     result_by_tech: dict = {}
 
-    for tech_name, tech_info in technologies.items():
-        paper_docs, implementation_docs = _retrieve_corpora(
-            tech_name,
-            tech_info["core_approach"],
-            retry_hint,
-        )
-        docs = _deduplicate_documents(paper_docs + implementation_docs)
-        all_docs.extend(docs)
-
-        paper_context = (
-            format_context(paper_docs)
-            if paper_docs
-            else "Context 내 기술 원문 근거 없음"
-        )
-        implementation_context = (
-            format_context(implementation_docs)
-            if implementation_docs
-            else "Context 내 공식 구현자료 근거 없음"
-        )
-        user_content = (
-            f"## 기술명\n{tech_name}\n\n"
-            f"## 기술 조사 Agent 요약\n{technical_evidence.get(tech_name, {})}\n\n"
-            f"## 기술 원문 Context\n{paper_context}\n\n"
-            f"## 공식 구현자료 Context\n{implementation_context}"
-        )
-        result = structured_call(TRLAssessment, SYSTEM_PROMPT, user_content)
-        information_gap = _trl_information_gap(result.score)
-        existing_limitations = (result.limitations or "").strip()
-        if information_gap not in existing_limitations:
-            result.limitations = f"{existing_limitations} {information_gap}".strip()
-        result_by_tech[tech_name] = result.model_dump()
-
-        evidence_items = documents_to_evidence_items(
-            docs,
-            agent=AGENT_NAME,
-            claim=(
-                f"{tech_name} TRL {result.score} 판단 근거"
-                if result.score is not None
-                else f"{tech_name} TRL 정보 부족 판단 근거"
-            ),
-        )
-        for item in evidence_items:
-            item["limitation"] = information_gap
-        all_evidence_items.extend(evidence_items)
+    # 기술 간 참조가 없는 독립 작업이므로 병렬 실행한다. 제출 순서대로 결과를 모아
+    # (완료 순서가 아님) 순차 실행과 동일한 병합 순서를 보장한다.
+    with ThreadPoolExecutor(max_workers=len(technologies) or 1) as executor:
+        futures = [
+            executor.submit(
+                _process_technology, tech_name, tech_info, technical_evidence, retry_hint
+            )
+            for tech_name, tech_info in technologies.items()
+        ]
+        for future in futures:
+            tech_name, result_dump, docs, evidence_items = future.result()
+            result_by_tech[tech_name] = result_dump
+            all_docs.extend(docs)
+            all_evidence_items.extend(evidence_items)
 
     # 기술별 검색 결과가 서로 겹칠 수 있으므로 State reducer에 넘기기 전에 다시 제거한다.
     all_docs = _deduplicate_documents(all_docs)
