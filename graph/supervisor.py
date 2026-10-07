@@ -71,6 +71,7 @@ def initial_control_state(run_id: str) -> dict[str, Any]:
         "retry_hints": {},
         "sufficiency": {},
         "faithfulness_rounds": 0,
+        "rework_rounds": 0,
         "report_revisions": 0,
         "quality_feedback": "",
     }
@@ -164,6 +165,9 @@ class _Decision:
         self.updates.setdefault("node_status", {}).update({n: value for n in nodes})
 
     def can_rework(self, node: str) -> bool:
+        """Agent별 상한과 전체 재작업 라운드 상한(비용 상한)을 모두 남겨 둔 경우에만 재작업한다."""
+        if self.state.get("rework_rounds", 0) >= settings.max_total_reworks:
+            return False
         return self.rework_counts.get(node, 0) < settings.max_rework_per_agent
 
     def resolve_failure(self, node: str) -> bool:
@@ -193,6 +197,8 @@ class _Decision:
         for node in targets:
             self.rework_counts[node] = self.rework_counts.get(node, 0) + 1
         self.updates["rework_counts"] = self.rework_counts
+        self.updates["rework_rounds"] = self.state.get("rework_rounds", 0) + 1
+        reason += f" [재작업 {self.updates['rework_rounds']}/{settings.max_total_reworks}라운드]"
         self.hints = dict(hints)
         self.updates["retry_hints"] = dict(hints)
         # 기술 조사 재작업 범위: 기술 근거(evidence_items)를 다시 수집하고, 함께 지목된 관점만

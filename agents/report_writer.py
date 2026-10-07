@@ -125,6 +125,25 @@ def clean_report(markdown: str) -> str:
     return head + sep + tail
 
 
+REPORT_TITLE = "KV Cache 최적화 기술 다관점 평가 보고서"
+
+
+def add_title(markdown: str, state: dict) -> str:
+    """보고서 맨 앞에 제목(H1)과 부제(대상 기술·관점·작성일)를 붙인다. LLM이 쓴 H1은 제거한다.
+
+    제목은 장(章)이 아니므로 "맨 앞 SUMMARY" 규칙(SUMMARY가 첫 장)과 충돌하지 않는다.
+    """
+    lines = markdown.lstrip().splitlines()
+    while lines and (lines[0].startswith("# ") or not lines[0].strip()):
+        lines.pop(0)
+    techs = " · ".join(
+        f"{name}({info.get('category', '')})" for name, info in (state.get("selected_technologies") or {}).items()
+    )
+    subtitle = " | ".join(p for p in (techs, "장문맥 처리 애플리케이션 관점",
+                                       datetime.now().strftime("%Y-%m-%d")) if p)
+    return f"# {REPORT_TITLE}\n\n{subtitle}\n\n" + "\n".join(lines).rstrip() + "\n"
+
+
 def complete_references(markdown: str, catalog: list[dict]) -> str:
     """본문에서 인용했지만 REFERENCE에 빠진 ID를 카탈로그로 채운다 (LLM 누락을 결정론적으로 보완).
 
@@ -136,17 +155,26 @@ def complete_references(markdown: str, catalog: list[dict]) -> str:
     if not sep:
         return markdown
     by_id = {c["ref_id"]: c for c in catalog}
+    cited = set(extract_citations(head))
+    # 본문에서 인용하지 않은 참고문헌 항목은 지운다 ("실제로 활용한 자료만 기재").
+    kept = []
+    for line in tail.splitlines():
+        ids = set(extract_citations(line))
+        if ids and not ids & cited:
+            continue
+        kept.append(line)
+    tail = "\n".join(kept)
     listed = set(extract_citations(tail))
     missing = [i for i in dict.fromkeys(extract_citations(head)) if i in by_id and i not in listed]
     if not missing:
-        return markdown
+        return head + sep + tail.rstrip() + "\n"
     lines = []
     for ref_id in sorted(missing, key=lambda x: int(x[1:])):
         c = by_id[ref_id]
-        title = c.get("source") or c.get("url") or "출처"
-        url = f", {c['url']}" if c.get("url") and c.get("url") != title else ""
-        lines.append(f"- [{ref_id}] {title}{url}")
-    return head + sep + tail.rstrip() + "\n\n기타 (본문 인용 보완)\n" + "\n".join(lines) + "\n"
+        title = (c.get("source") or c.get("url") or "출처").rstrip(".")
+        url = f" {c['url']}" if c.get("url") and c.get("url") != title else ""
+        lines.append(f"- {title}.{url} [{ref_id}]")  # 본 목록과 같은 "제목. URL [R#]" 형식
+    return head + sep + tail.rstrip() + "\n\n기타 (웹페이지)\n\n" + "\n".join(lines) + "\n"
 
 
 def run(state: GraphState) -> dict:
@@ -266,7 +294,7 @@ def run(state: GraphState) -> dict:
     response = llm.invoke(
         [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_content)]
     )
-    report_markdown = complete_references(clean_report(response.content), catalog)
+    report_markdown = add_title(complete_references(clean_report(response.content), catalog), state)
 
     settings.outputs_path.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

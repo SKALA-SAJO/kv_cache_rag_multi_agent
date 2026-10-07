@@ -47,6 +47,11 @@ WINNER_RECOMMENDATION_PATTERNS = re.compile(
     r"최종 승자|승자로|채택을 권고|도입을 권고|추천한다|추천합니다|가장 좋은"
 )
 STRONG_SUPERIORITY_PATTERNS = re.compile(r"우월|압도적|superior|outperforms")
+# 실제 보고서(2026-10-07)에서 규칙·Judge를 모두 통과한 한쪽 편향 서술. 조건이 붙어도 우열 판정이라 예외 없음.
+#  - "경쟁 기술 대비 … 처리량 우수", "MLA는 … 더 진전된 상태", "A가 긍정적 평가를 받는 반면, B는 …"
+ONE_SIDED_PATTERNS = re.compile(
+    r"(대비|보다)[^.。\n]{0,30}우수|더\s*진전|긍정적\s*평가를\s*받는\s*반면"
+)
 COMPARATIVE_PATTERNS = re.compile(
     r"우세하다|더 우수|더 낫|더 유리|더 적합"
 )
@@ -115,6 +120,10 @@ def rule_neutrality(report: str) -> dict[str, Any]:
     for sentence in re.split(r"(?<=[.!?。])\s+|\n", _body_without_reference(report)):
         sentence = sentence.strip()
         if not sentence:
+            continue
+
+        if ONE_SIDED_PATTERNS.search(sentence) and not WINNER_NEGATION_PATTERN.search(sentence):
+            issues.append(f"한쪽 편향 비교 표현: \"{sentence[:120]}\"")
             continue
 
         if STRONG_SUPERIORITY_PATTERNS.search(sentence) and not NEGATION_PATTERN.search(sentence):

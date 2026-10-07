@@ -186,6 +186,19 @@ class SupervisorPolicyTest(unittest.TestCase):
         _, _, plain, _ = decide(_state(node_status=pending, **sufficient))
         self.assertNotIn("재작업", plain)
 
+    def test_total_rework_budget_stops_reworks_across_agents(self) -> None:
+        # Agent별 예산은 남았어도 전체 재작업 라운드를 다 쓰면 재작업하지 않고 다음 단계로 간다
+        status = {**initial_control_state("t")["node_status"], **{n: "done" for n in PERSPECTIVE_NODES},
+                  "tech_research": "done"}
+        weak = {"evidence_items": [e for n in PERSPECTIVE_NODES for e in _evidence(n, 4, 1)],
+                **{n: {"A": {}, "B": {}} for n in PERSPECTIVE_NODES}}
+        targets, action, reason, updates = decide(_state(node_status=status, **weak))
+        self.assertEqual(action, "rework_insufficient")
+        self.assertEqual(updates["rework_rounds"], 1)
+        self.assertIn(f"1/{settings.max_total_reworks}라운드", reason)
+        targets, action, _, _ = decide(_state(node_status=status, rework_rounds=settings.max_total_reworks, **weak))
+        self.assertEqual((targets, action), (["synthesis"], "synthesize"))
+
     def test_decision_reasons_distinguish_first_run_from_rework(self) -> None:
         done = {n: "done" for n in initial_control_state("t")["node_status"]}
         sufficient = {"evidence_items": [e for n in PERSPECTIVE_NODES for e in _evidence(n, 4, 2)],

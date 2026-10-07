@@ -29,7 +29,8 @@
     쓰이는 필드(node_status, errors, evidence_items, references)에는 리듀서를 둔다.
     관점별 결과는 Agent마다 키가 달라(trl_evaluation 등) 충돌하지 않는다.
   - 종료 보장 : step_count/max_steps(Supervisor 스텝 상한), attempts(실패 재시도 상한),
-    rework_counts(재작업 상한), faithfulness_rounds(검증 재작업 라운드 상한),
+    rework_counts(Agent별 재작업 상한), rework_rounds(전체 재작업 라운드 상한),
+    faithfulness_rounds(검증 재작업 라운드 상한),
     report_revisions(보고서 재작성 상한) + LangGraph
     recursion_limit 이중 가드.
 """
@@ -126,6 +127,7 @@ class ControlState(TypedDict, total=False):
     retry_hints: dict[str, str]  # Supervisor → 하위 Agent 재작업 지시 (Agent 간 직접 통신 금지, 소비 후 Supervisor가 비움)
     sufficiency: dict[str, dict[str, Any]]  # 관점별 근거 충분도 판정 {agent: {sufficient, per_technology, reason}}
     faithfulness_rounds: int  # 검증 실패로 재작업을 요청한 라운드 수 (종료 가드)
+    rework_rounds: int  # 전체 재작업 라운드 수 — max_total_reworks로 비용 상한 (종료 가드)
     report_revisions: int  # 품질 평가 미달로 보고서를 다시 쓴 횟수
     quality_feedback: str  # Supervisor → report_writer 재작성 지시
 

@@ -46,8 +46,26 @@ class ReportContractTest(unittest.TestCase):
     def test_complete_references_fills_cited_ids_missing_from_reference(self) -> None:
         catalog = [{"ref_id": "R1", "source": "a.pdf", "url": None}, {"ref_id": "R2", "source": "Blog", "url": "https://x.test"}]
         fixed = report_writer.complete_references("본문 [R1][R2]\n\n## REFERENCE\n- [R1] A (2024).", catalog)
-        self.assertIn("[R2] Blog, https://x.test", fixed)
+        self.assertIn("- Blog. https://x.test [R2]", fixed)
         self.assertEqual(fixed.count("[R1]"), 2)  # 이미 있는 항목은 중복 추가하지 않음
+
+    def test_uncited_reference_entries_are_removed(self) -> None:
+        catalog = [{"ref_id": f"R{i}", "source": f"s{i}", "url": None} for i in (1, 2, 3)]
+        fixed = report_writer.complete_references(
+            "본문 [R1][R3]\n\n## REFERENCE\n논문\n- A. [R1]\n- B(본문 미인용). [R2]\n- C. [R3]", catalog)
+        self.assertNotIn("[R2]", fixed)
+        self.assertIn("[R1]", fixed.split("## REFERENCE")[1])
+        self.assertIn("[R3]", fixed.split("## REFERENCE")[1])
+        self.assertIn("논문", fixed)  # ID 없는 분류 제목은 유지
+
+    def test_title_is_prepended_once_and_llm_h1_is_replaced(self) -> None:
+        state = {"selected_technologies": {"DeepSeek-V2 MLA": {"category": "SW"}, "InfiniGen": {"category": "HW·인프라"}}}
+        titled = report_writer.add_title("# LLM이 쓴 제목\n\n## SUMMARY\n요약", state)
+        self.assertTrue(titled.startswith(f"# {report_writer.REPORT_TITLE}\n"))
+        self.assertEqual(titled.count("\n# "), 0)  # H1은 하나뿐
+        self.assertNotIn("LLM이 쓴 제목", titled)
+        self.assertIn("DeepSeek-V2 MLA(SW) · InfiniGen(HW·인프라)", titled)
+        self.assertLess(titled.index(report_writer.REPORT_TITLE), titled.index("## SUMMARY"))
 
     def test_report_is_saved_as_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -68,7 +86,8 @@ class ReportContractTest(unittest.TestCase):
             self.assertNotIn("final_report", result)
             self.assertEqual(Path(result["report_path"]), reports[0])
             body = reports[0].read_text(encoding="utf-8")
-            self.assertTrue(body.startswith("SUMMARY"))
+            self.assertTrue(body.startswith(f"# {report_writer.REPORT_TITLE}"))  # 제목이 맨 앞
+            self.assertIn("SUMMARY", body)
             self.assertIn("REFERENCE", body)
 
 
@@ -85,7 +104,8 @@ class ReportContractTest(unittest.TestCase):
             self.assertNotEqual(first, second)  # 이전 파일을 덮어쓰지 않고 새 파일을 가리킴
             self.assertTrue(Path(first).exists() and Path(second).exists())
             Path(first).write_text("OLD", encoding="utf-8")
-            self.assertTrue(load_report({"report_path": second}).startswith("SUMMARY"))  # 최신 경로만 읽음
+            self.assertIn("SUMMARY", load_report({"report_path": second}))  # 최신 경로만 읽음
+            self.assertNotEqual(load_report({"report_path": second}), "OLD")
         self.assertEqual(load_report({}), "")
         self.assertEqual(load_report({"report_path": "/nonexistent/report.md"}), "")
 

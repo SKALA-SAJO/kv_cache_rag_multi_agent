@@ -55,7 +55,11 @@
 - **보고서 품질 평가 (Hybrid = 1안 + 2안)** : 보고서 생성 직후 필수 게이트. 4개 항목(Groundedness·
   중립성·편향 통제·관점 커버리지) 각각을 **규칙 판정 AND LLM Judge 판정**으로 결정하고, 분량(PDF 10쪽)·
   필수 목차(SUMMARY/REFERENCE)도 검사. 미달 시 원인이 근거면 해당 관점 재작업, 서술이면 보고서 재작성 루프
-- 본문 모든 주장에 `[R#]` 인용 ID → REFERENCE와 1:1 연결 (규칙 기반 Groundedness 검사가 가능)
+- 본문 모든 주장에 `[R#]` 인용 ID → REFERENCE와 1:1 연결 (규칙 기반 Groundedness 검사가 가능). 본문에서
+  인용하지 않은 참고문헌은 자동 제거하고 누락된 인용은 카탈로그로 보완("실제로 활용한 자료만 기재")
+- 보고서 맨 앞에 제목·대상 기술·관점·작성일을 자동 부착, SUMMARY는 1/2쪽 이내 핵심 결론으로 제한
+- 중립성 규칙에 실제 보고서에서 새어 나간 한쪽 편향 비교("경쟁 기술 대비 … 우수", "더 진전", "A는 긍정적 평가를
+  받는 반면 B는 …")를 추가하고, TRL은 논문·공개 저장소 근거만 있으면 6을 상한으로 두어 실행 간 점수 흔들림을 줄임
 - 실행마다 `outputs/`에 보고서(`report_*_rev{n}.md`), 품질 verdict(`*.quality.json`), 결정 로그
   (`traces/{run_id}.jsonl`), 최종본(`report_*_final.md`), 제출용 PDF(`Agent-Output_*.pdf`) 생성
 - **결정 이력 부록** : 최종본·제출 PDF 끝에 이번 run의 Supervisor 결정 이력 표(step·결정·대상·사유)와
@@ -134,7 +138,7 @@ Supervisor 자체는 LLM이 아닌 **결정론적 정책**이다. LLM 판정이 
     저장한다. Supervisor 1스텝 = 체크포인트 약 2개(supervisor + 하위 노드)이고 State는 단조 증가해 첫 평가 이후
     130~230KB이므로, 용량 ≈ 체크포인트 수 × 약 0.15~0.2MB로 스텝에 비례한다. `MAX_SUPERVISOR_STEPS=30`까지 가면
     체크포인트 약 60개로 12~14MB가 되며, 보고된 14MB와 같은 규모다(추정). DB는 실행(thread)마다 누적된다.
-  - ② 실행 중 상한 : 재작업 예산(`MAX_REWORK_PER_AGENT`, `MAX_FAITHFULNESS_ROUNDS`)과 스텝 상한이 곧 크기 상한이다.
+  - ② 실행 중 상한 : 재작업 예산(`MAX_REWORK_PER_AGENT`, `MAX_TOTAL_REWORKS`, `MAX_FAITHFULNESS_ROUNDS`)과 스텝 상한이 곧 크기 상한이다.
   - ③ 종료 후 정리([`graph/checkpoint_maintenance.py`](graph/checkpoint_maintenance.py)) : **정상 종료한 run**(더 실행할
     노드가 없고 `report_path`가 있음)만 마지막 체크포인트를 남기고 이전 체크포인트·writes를 지운 뒤 VACUUM한다.
     기본 동작이며 `python app.py --keep-checkpoints`로 끌 수 있다. 마지막 체크포인트가 최종 State 전체를 담으므로
@@ -166,7 +170,8 @@ Supervisor 자체는 LLM이 아닌 **결정론적 정책**이다. LLM 판정이 
   이 설정의 대상이 아니므로 API 전체 동시 요청 수를 4로 보장하지 않는다. 강의자료 PDF 132쪽
   「Fan-out 설계 고려사항 — Concurrency 제어」의 동시 태스크 수·비용 제어 원칙을 적용했다.
 - 종료 보장 : ① Supervisor 스텝 상한 `MAX_SUPERVISOR_STEPS=30`(초과 시 보고서만 생성 후 END),
-  ② 실패 재시도 `MAX_FAILURE_RETRIES=1`, ③ Agent별 재작업 `MAX_REWORK_PER_AGENT=2`, ④ 검증 재작업 라운드
+  ② 실패 재시도 `MAX_FAILURE_RETRIES=1`, ③ Agent별 재작업 `MAX_REWORK_PER_AGENT=2`와 전체 재작업 라운드 `MAX_TOTAL_REWORKS=4`(Agent별 상한만으로는
+  5개 Agent 합계가 스텝 상한까지 누적되고 같은 지적이 반복돼도 계속 돌아, 비용 상한을 따로 둠), ④ 검증 재작업 라운드
   `MAX_FAITHFULNESS_ROUNDS=2`(검증 루프가 스텝 예산을 소진해 품질 평가 루프에 못 가는 일 방지), ⑤ 보고서
   재작성 `MAX_REPORT_REVISIONS=2`, ⑥ LangGraph `recursion_limit=80` 이중 가드. 품질이 끝내 미달이어도
   예산 소진 시 verdict를 남기고 종료함을 테스트로 검증(`tests/test_state_workflow.py`).
@@ -299,7 +304,8 @@ uv run python -m unittest discover -s tests -v   # API 호출 없음
 - 전은배 : Supervisor 패턴 설계 및 구현 — 결정론적 라우팅 정책(`graph/supervisor.py`), hub-and-spoke
   그래프 재구성(`graph/workflow.py`), State Schema 제어/페이로드 분리 설계(`graph/state.py`),
   기술 조사 재작업 범위 축소(지목된 관점만 재실행)와 재작업 전후 결정 사유 구분, 소비된 재작업 지시·무효화된
-  품질 verdict 정리, 최종 보고서 URI화(State에는 `report_path`만, 본문은 파일)
+  품질 verdict 정리, 최종 보고서 URI화(State에는 `report_path`만, 본문은 파일), 전체 재작업 라운드 예산,
+  보고서 제목·참고문헌 정리와 중립성 규칙·보고서/TRL 프롬프트 보강
 - 박성우 : 체크포인트 재개 검증 테스트 — 대역 Agent 중단 후 임시 SQLite DB를 다시 열어 동일
   `thread_id`의 `invoke(None, ...)` 재개·완료를 검증. 라이브 통합 테스트에 `quality_verdict`와
   `next_nodes == []` 및 최종 품질 노드 완료 검증을 추가. `RUN_LIVE_TESTS` 미설정·`0`·`1` 실행 조건과

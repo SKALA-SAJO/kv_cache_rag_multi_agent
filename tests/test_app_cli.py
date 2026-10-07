@@ -27,9 +27,9 @@ class AppCliTest(unittest.TestCase):
                 writer = runners["report_writer"]
 
                 def write_report(state):
-                    result = writer(state)
+                    result = writer(state)  # 대역도 본문은 파일로 쓰고 report_path(URI)만 돌려준다
                     path = directory / "report_fake.md"
-                    path.write_text(result["final_report"], encoding="utf-8")
+                    path.write_text(Path(result["report_path"]).read_text(encoding="utf-8"), encoding="utf-8")
                     return {**result, "report_path": str(path)}
 
                 runners["report_writer"] = write_report
