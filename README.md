@@ -100,6 +100,18 @@ Supervisor 자체는 LLM이 아닌 **결정론적 정책**이다. LLM 판정이 
 ## State Schema
 정의: [`graph/state.py`](graph/state.py) (설계 원칙이 모듈 docstring에 문서화되어 있음)
 
+항목별 한 줄 근거(코드 위치). 이어지는 불릿은 항목별 세부 근거와 실측이다.
+
+| 항목 | 한 줄 근거 | 코드 |
+|---|---|---|
+| 제어 vs 페이로드 분리 | `GraphState`를 `PayloadState`(작업 결과)와 `ControlState`(라우팅·종료·재개 메타) 두 TypedDict로 나눠, Supervisor가 제어 키와 페이로드의 존재·충분도만 읽는다 | `graph/state.py` |
+| 관측성 위치 | 결정 로그(사유 포함)는 State 밖 `outputs/traces/{run_id}.jsonl`과 LangSmith로 보내고, State에는 최신 결정 1건(`last_decision`)만 남긴다 | `graph/observability.py` |
+| 지속성 비용 | 원문 청크 대신 300자 인용 근거만, 보고서 본문 대신 `report_path` URI만 State에 두고, 정상 종료 run은 마지막 체크포인트만 남긴다(실측 8.95MB → 0.46MB) | `graph/checkpoint_maintenance.py` |
+| 상관 | `run_id` 하나가 체크포인트 `thread_id`, LangSmith 루트 run id, 결정 로그 파일명을 잇는다 | `app.py` |
+| 재개/복구 | `node_status`·`attempts`·`errors`·`error_times`가 재개에 필요한 최소 상태이고, SqliteSaver 체크포인트로 `--resume`이 마지막 superstep부터 이어진다(Ctrl+C·SIGKILL 실측) | `graph/workflow.py`, `app.py` |
+| 동시 처리 | 병렬 관점이 같은 superstep에 쓰는 `node_status`·`errors`·`error_times`·`evidence_items`·`references`에 리듀서(`merge_dict`, 중복 제거)를 두고 `max_concurrency=4`로 병렬 노드 수를 제한한다 | `graph/state.py`, `config.py` |
+| 종료 보장 | 스텝 30·실패 재시도 1·Agent별 재작업 2·전체 재작업 4·검증 라운드 2·보고서 재작성 2에 `recursion_limit=80`을 더한 이중 가드 | `config.py` |
+
 - 제어 vs 페이로드 분리 : `GraphState`를 두 블록으로 분리. 페이로드 = 관점별 결과·`evidence_items`·
   `references`·`synthesis`·`report_path`(보고서 URI)·`quality_verdict`. 제어 = `run_id`, `step_count/max_steps`,
   `next_nodes`, `last_decision`, `node_status`, `attempts`, `errors`, `error_times`, `rework_counts`, `rework_rounds`,
