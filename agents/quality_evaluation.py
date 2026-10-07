@@ -46,10 +46,12 @@ PERSPECTIVE_HEADINGS = {
 WINNER_RECOMMENDATION_PATTERNS = re.compile(
     r"최종 승자|승자로|채택을 권고|도입을 권고|추천한다|추천합니다|가장 좋은"
 )
+STRONG_SUPERIORITY_PATTERNS = re.compile(r"우월|압도적|superior|outperforms")
 COMPARATIVE_PATTERNS = re.compile(
-    r"우월|우세하다|더 우수|더 낫|더 유리|더 적합|압도적|superior|outperforms"
+    r"우세하다|더 우수|더 낫|더 유리|더 적합"
 )
 NEGATION_PATTERN = re.compile(r"하지\s*않|않는다|아니다|없다|수\s*없|어렵|불가|불가능|지양|배제")
+WINNER_NEGATION_PATTERN = re.compile(r"하지\s*않|않는다|아니다")
 CONDITIONAL_CUES = re.compile(r"조건|경우|환경|상황|에서는|에선|일\s*때|할\s*때|이라면|라면|가능\s*시|필요\s*시")
 
 _CITATION_GROUP = re.compile(r"\[(R\d+(?:\s*[,;]\s*R\d+)*)\]")
@@ -115,7 +117,11 @@ def rule_neutrality(report: str) -> dict[str, Any]:
         if not sentence:
             continue
 
-        if WINNER_RECOMMENDATION_PATTERNS.search(sentence) and not NEGATION_PATTERN.search(sentence):
+        if STRONG_SUPERIORITY_PATTERNS.search(sentence) and not NEGATION_PATTERN.search(sentence):
+            issues.append(f"우열/추천 표현: \"{sentence[:120]}\"")
+            continue
+
+        if WINNER_RECOMMENDATION_PATTERNS.search(sentence) and not WINNER_NEGATION_PATTERN.search(sentence):
             issues.append(f"우열/추천 표현: \"{sentence[:120]}\"")
             continue
 
