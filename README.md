@@ -95,7 +95,9 @@ Supervisor 자체는 LLM이 아닌 **결정론적 정책**이다. LLM 판정이 
   `references`·`synthesis`·`final_report`·`quality_verdict`. 제어 = `run_id`, `step_count/max_steps`,
   `next_nodes`, `last_decision`, `node_status`, `attempts`, `errors`, `rework_counts`, `retry_hints`,
   `sufficiency`, `faithfulness_rounds`, `report_revisions`, `quality_feedback`. Supervisor는 페이로드 본문을 해석하지 않고
-  존재 여부·근거 수·출처 수·verdict 플래그만 읽는다.
+  존재 여부·근거 수·출처 수·verdict 플래그만 읽는다. 재작업 지시(`retry_hints`)도 제어 필드라서, 대상 Agent가
+  지시를 소비해 `done`이 되면 다음 스텝에서 Supervisor가 비운다(실패·중단 노드의 지시는 재시도·재개용으로 유지).
+  하위 Agent가 직접 지우지 않는 것은 "하위 Agent는 제어 필드를 쓰지 않는다"는 통신 제약 때문이다.
 - 관측성 위치 : 결정 로그 전문(step, action, targets, **reason**, 충분도 판정)은 State 밖
   `outputs/traces/{run_id}.jsonl`과 LangSmith로 보낸다 ([`graph/observability.py`](graph/observability.py)).
   State에는 최신 결정 1건(`last_decision`)만 덮어써서 트레이스의 supervisor 노드 출력에서도 사유가 보인다.
@@ -179,7 +181,8 @@ Supervisor 정책 우선순위 (`graph/supervisor.py` `decide`):
 **함께 지목된 관점만** 재실행하고 나머지 관점은 결과를 유지한다(각 관점의 판단 근거는 자체 RAG·외부
 검색이고 기술 조사 요약은 참고 맥락이므로, 4관점 전체 재실행 비용 대비 실익이 작음). 유지된 관점이
 이전 요약을 참고한 상태라는 점은 결정 사유(`reason`)에 명시된다. 재작업 이후의 종합·검증·보고서 결정은
-사유에 "재작업 결과 반영"으로 표시되어 첫 실행과 트레이스에서 구분된다.
+사유에 "재작업 결과 반영"으로 표시되어 첫 실행과 트레이스에서 구분된다. 첫 보고서라도 그 전에 재작업이
+있었다면 사유에 "재작업 N회 반영: [대상]"이 붙는다.
 
 
 ## Directory Structure

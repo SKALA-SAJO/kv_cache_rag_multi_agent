@@ -144,6 +144,43 @@ class SupervisorPolicyTest(unittest.TestCase):
         self.assertIn("재작업 지시 관점", reason)
         self.assertNotIn("미수집", reason)
 
+    def test_consumed_retry_hints_are_cleared_by_supervisor(self) -> None:
+        sufficient = {"evidence_items": [e for n in PERSPECTIVE_NODES for e in _evidence(n, 4, 2)],
+                      **{n: {"A": {}, "B": {}} for n in PERSPECTIVE_NODES}}
+        status = {**initial_control_state("t")["node_status"], **{n: "done" for n in PERSPECTIVE_NODES},
+                  "tech_research": "done", "stakeholder_evaluation": "pending"}
+        hints = {"tech_research": "t", "stakeholder_evaluation": "s", "trl_evaluation": "old"}
+        targets, _, reason, updates = decide(_state(node_status=status, retry_hints=hints, **sufficient))
+        # done이 된 노드(tech_research·trl)의 지시는 비우고, 아직 소비 전인 지시만 남긴다
+        self.assertEqual(updates["retry_hints"], {"stakeholder_evaluation": "s"})
+        self.assertEqual(targets, ["stakeholder_evaluation"])
+        self.assertIn("재작업 지시 관점", reason)
+
+        # 실패한 노드의 지시는 재시도 때 다시 쓰므로 남긴다
+        failed = {**status, "stakeholder_evaluation": "failed"}
+        _, _, _, updates = decide(_state(node_status=failed, retry_hints={"stakeholder_evaluation": "s"}, **sufficient))
+        self.assertNotIn("retry_hints", updates)
+
+    def test_stale_hint_does_not_mislabel_failure_retry_as_rework(self) -> None:
+        # 재작업을 이미 마친 관점이 나중에 실패 → 재시도는 '실패 재시도'로만 표시돼야 한다
+        status = {**initial_control_state("t")["node_status"], **{n: "done" for n in PERSPECTIVE_NODES},
+                  "tech_research": "done", "domain_evaluation": "pending"}
+        _, _, reason, updates = decide(_state(node_status=status, retry_hints={"trl_evaluation": "old"}))
+        self.assertEqual(updates["retry_hints"], {})
+        self.assertNotIn("재작업 지시 관점", reason)
+
+    def test_first_report_reason_mentions_prior_reworks(self) -> None:
+        done = {n: "done" for n in initial_control_state("t")["node_status"]}
+        sufficient = {"evidence_items": [e for n in PERSPECTIVE_NODES for e in _evidence(n, 4, 2)],
+                      **{n: {"A": {}, "B": {}} for n in PERSPECTIVE_NODES}}
+        pending = {**done, "report_writer": "pending", "quality_evaluation": "pending"}
+        _, _, reason, _ = decide(_state(node_status=pending, rework_counts={"tech_research": 2, "trl_evaluation": 1},
+                                        **sufficient))
+        self.assertIn("근거 충분성 확인 완료", reason)
+        self.assertIn("재작업 3회 반영", reason)
+        _, _, plain, _ = decide(_state(node_status=pending, **sufficient))
+        self.assertNotIn("재작업", plain)
+
     def test_decision_reasons_distinguish_first_run_from_rework(self) -> None:
         done = {n: "done" for n in initial_control_state("t")["node_status"]}
         sufficient = {"evidence_items": [e for n in PERSPECTIVE_NODES for e in _evidence(n, 4, 2)],
@@ -328,6 +365,7 @@ class TechReworkScopeGraphTest(unittest.TestCase):
         # market은 첫 실행 단일 출처로 충분도 게이트 재작업 1회 → 2회 (tech 재작업과 무관)
         self.assertEqual(calls.count("market_evaluation"), 2)
         self.assertEqual(result["next_nodes"], [])
+        self.assertEqual(result["retry_hints"], {})  # 모든 재작업 지시가 소비 후 정리됨
 
 
 class CheckpointResumeTest(unittest.TestCase):

@@ -126,6 +126,21 @@ class _Decision:
         self.updates: dict[str, Any] = {}
         self.attempts = dict(state.get("attempts", {}))
         self.rework_counts = dict(state.get("rework_counts", {}))
+        self.hints = dict(state.get("retry_hints", {}))
+
+    def prune_consumed_hints(self) -> None:
+        """재작업 지시를 소비(=해당 노드 done)한 뒤 State에서 비운다.
+
+        State에는 제어에 필요한 최소치만 둔다. 남겨 두면 같은 Agent가 실패 재시도 등 다른 이유로
+        다시 돌 때 낡은 지시를 또 쓰고, 결정 사유도 '재작업'으로 잘못 찍힌다. 하위 Agent가 직접
+        지우면 "하위 Agent는 제어 필드를 쓰지 않는다"는 통신 제약에 어긋나므로 Supervisor가 정리한다.
+        실패(failed)·중단(running) 노드의 지시는 재시도·재개 때 다시 써야 하므로 남긴다.
+        """
+        consumed = [node for node in self.hints if self.status_of(node) == "done"]
+        if consumed:
+            for node in consumed:
+                del self.hints[node]
+            self.updates["retry_hints"] = dict(self.hints)
 
     def status_of(self, node: str) -> str:
         return self.status.get(node, "pending")
@@ -157,7 +172,8 @@ class _Decision:
         for node in targets:
             self.rework_counts[node] = self.rework_counts.get(node, 0) + 1
         self.updates["rework_counts"] = self.rework_counts
-        self.updates["retry_hints"] = hints
+        self.hints = dict(hints)
+        self.updates["retry_hints"] = dict(hints)
         # 기술 조사 재작업 범위: 기술 근거(evidence_items)를 다시 수집하고, 함께 지목된 관점만
         # 다시 돈다. 지목되지 않은 관점은 결과를 유지한다 — 각 관점의 판단 근거는 자체 RAG·외부
         # 검색이고 technical_evidence는 참고 요약이라, 요약 갱신만으로 4관점을 모두 재실행하는
@@ -179,6 +195,7 @@ def decide(state: GraphState) -> tuple[list[str], str, str, dict[str, Any]]:
     d = _Decision(state)
     step = state.get("step_count", 0) + 1
     d.updates["step_count"] = step
+    d.prune_consumed_hints()
     targets, action, reason = _policy(d, state, step)
     return targets, action, reason, d.updates
 
@@ -219,9 +236,8 @@ def _policy(d: _Decision, state: GraphState, step: int) -> tuple[list[str], str,
         log_event(state.get("run_id", ""), "supervisor", "fallback_exclude", nodes=excluded,
                   errors={n: state.get("errors", {}).get(n, "") for n in excluded})
     if to_run or retried:
-        hints = state.get("retry_hints", {})
-        reworked = [PERSPECTIVE_NODES[n] for n in to_run if n in hints]
-        fresh = [PERSPECTIVE_NODES[n] for n in to_run if n not in hints]
+        reworked = [PERSPECTIVE_NODES[n] for n in to_run if n in d.hints]
+        fresh = [PERSPECTIVE_NODES[n] for n in to_run if n not in d.hints]
         parts = []
         if fresh:
             parts.append(f"미수집 관점 {fresh}")
@@ -297,9 +313,14 @@ def _policy(d: _Decision, state: GraphState, step: int) -> tuple[list[str], str,
                 elif state.get("final_report"):
                     reason = "관점 재작업 결과 반영 — 보고서 재작성"
                 else:
+                    reworks = state.get("rework_counts", {})
                     unverified = len((state.get("faithfulness_check") or {}).get("insufficient_evidence_claims", []))
-                    reason = "근거 충분성 확인 완료 — 보고서 작성" + (
-                        f" (검증 미통과 claim {unverified}건은 '근거 부족으로 검증되지 않음' 표기)" if unverified else "")
+                    notes = []
+                    if reworks:
+                        notes.append(f"재작업 {sum(reworks.values())}회 반영: {sorted(reworks)}")
+                    if unverified:
+                        notes.append(f"검증 미통과 claim {unverified}건은 '근거 부족으로 검증되지 않음' 표기")
+                    reason = "근거 충분성 확인 완료 — 보고서 작성" + (f" ({'; '.join(notes)})" if notes else "")
                 return d.dispatch([node], "write_report", reason)
             return d.dispatch([node], "evaluate_quality", "보고서 생성 후 품질 평가(필수 게이트)")
 

@@ -110,7 +110,7 @@ class GraphState(TypedDict, total=False):
     attempts: dict[str, int]  # 실패 재시도 판단용 디스패치 횟수 (Supervisor만 씀)
     errors: Annotated[dict[str, str], merge_dict]  # {node: 최근 에러 메시지}
     rework_counts: dict[str, int]  # 근거 부족에 따른 재작업 요청 횟수 (Supervisor만 씀)
-    retry_hints: dict[str, str]  # Supervisor → 하위 Agent 재작업 지시 (Agent 간 직접 통신 금지)
+    retry_hints: dict[str, str]  # Supervisor → 하위 Agent 재작업 지시 (Agent 간 직접 통신 금지, 소비 후 Supervisor가 비움)
     sufficiency: dict[str, dict[str, Any]]  # 관점별 근거 충분도 판정 {agent: {sufficient, per_technology, reason}}
     faithfulness_rounds: int  # 검증 실패로 재작업을 요청한 라운드 수 (종료 가드)
     report_revisions: int  # 품질 평가 미달로 보고서를 다시 쓴 횟수
