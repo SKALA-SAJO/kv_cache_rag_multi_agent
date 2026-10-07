@@ -17,12 +17,12 @@
   `add_conditional_edges`로 다음 노드를 고른다. 같은 코드라도 실행마다 경로가 달라진다 —
   예: 근거 부족 관점만 재작업 → 종합 재실행, 검증 실패 claim의 출처 Agent만 재작업, 품질 미달 시
   보고서 재작성, 실패 Agent 재시도/제외, 예산 소진 시 종료.
-- 실제 실행 예 (run `1f4c1962`, `outputs/traces/{run_id}.jsonl`) : Supervisor 라우팅 **29회**, 재작업 **6회**.
-  `collect_tech → collect_perspectives(4 병렬) → synthesize → verify → rework_unfaithful[tech_research]
-  → (4관점 재수집) → … → rework_unfaithful[market, trl] → … → rework_unfaithful[domain] → write_report
-  → evaluate_quality(FAIL: groundedness) → rework_quality[domain] → synthesize → verify → write_report
-  → evaluate_quality(PASS) → END`. 고정 파이프라인이었다면 9노드 1회 실행으로 끝났을 흐름이 State 판정에
-  따라 매번 다른 Agent 부분집합만 재실행됐다.
+- 실제 실행 예 (최종 제출 run `82fc9d54`, [트레이스 이미지](docs/tracing/tracing-1.png), 결정 로그
+  `outputs/traces/{run_id}.jsonl`) : Supervisor 라우팅 **8회**, 재작업 **1회**, 품질 평가 PASS, 6.0분.
+  `collect_tech → collect_perspectives(4 병렬) → rework_insufficient[domain](충분도 게이트: 기술별 단일 출처 의존)
+  → synthesize → verify → write_report(검증 미통과 claim 2건은 '근거 부족' 표기) → evaluate_quality(PASS) → END`.
+  같은 코드라도 State에 따라 경로가 달라진다 — 개발 중 run에서는 검증 실패 출처 재작업이 반복돼 라우팅 19~33회,
+  재작업·재작성 6~8회까지 갔고(전체 재작업 예산 도입 전), 고정 파이프라인이었다면 9노드 1회 실행으로 끝났다.
 
 
 ## Selected Technologies
@@ -264,7 +264,7 @@ Supervisor 정책 우선순위 (`graph/supervisor.py` `decide`):
 ├── scripts/                  # 코퍼스 다운로드, 보고서 → PDF 변환
 ├── tests/                    # API 없이 도는 단위·그래프 통합 테스트 + 검색/생성 평가
 ├── outputs/                  # 실행 결과: 보고서·verdict·결정 로그·체크포인트·PDF (git 미포함)
-├── docs/tracing/             # 제출용 LangSmith 트레이스 캡처 (tracing-1.png, ...)
+├── docs/tracing/             # 제출용 LangSmith 트레이스 이미지 (tracing-1.png, ...)
 ├── technologies.py / rubrics.py / config.py
 ├── app.py                    # 실행 스크립트
 └── README.md
