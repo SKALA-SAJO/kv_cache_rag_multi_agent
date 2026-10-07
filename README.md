@@ -102,15 +102,15 @@ Supervisor 자체는 LLM이 아닌 **결정론적 정책**이다. LLM 판정이 
 
 - 제어 vs 페이로드 분리 : `GraphState`를 두 블록으로 분리. 페이로드 = 관점별 결과·`evidence_items`·
   `references`·`synthesis`·`report_path`(보고서 URI)·`quality_verdict`. 제어 = `run_id`, `step_count/max_steps`,
-  `next_nodes`, `last_decision`, `node_status`, `attempts`, `errors`, `rework_counts`, `retry_hints`,
-  `sufficiency`, `faithfulness_rounds`, `report_revisions`, `quality_feedback`. Supervisor는 페이로드 본문을 해석하지 않고
+  `next_nodes`, `last_decision`, `node_status`, `attempts`, `errors`, `error_times`, `rework_counts`, `rework_rounds`,
+  `retry_hints`, `sufficiency`, `faithfulness_rounds`, `report_revisions`, `quality_feedback`. Supervisor는 페이로드 본문을 해석하지 않고
   존재 여부·근거 수·출처 수·verdict 플래그만 읽는다. 재작업 지시(`retry_hints`)도 제어 필드라서, 대상 Agent가
   지시를 소비해 `done`이 되면 다음 스텝에서 Supervisor가 비운다(실패·중단 노드의 지시는 재시도·재개용으로 유지).
   하위 Agent가 직접 지우지 않는 것은 "하위 Agent는 제어 필드를 쓰지 않는다"는 통신 제약 때문이다.
   같은 원칙으로, 재작업·재작성으로 보고서가 다시 써지면 Supervisor가 이전 `quality_verdict`도 비우고(하류 결과
   무효화), 새 보고서의 평가가 반복 실패해 종료하면 `evaluated: false`("평가 불가")로 명시해 이전 판정이 남지 않게 한다.
-  - 레이어드 : 두 블록을 주석 구분이 아니라 **별도 TypedDict 두 개**로 선언한다 — `PayloadState`(작업 결과 15개 키)와
-    `ControlState`(제어 메타 14개 키)를 따로 정의하고 `GraphState`가 둘을 상속해 그래프 스키마가 된다(전부 `total=False`로 부분
+  - 레이어드 : 두 블록을 주석 구분이 아니라 **별도 TypedDict 두 개**로 선언한다 — `PayloadState`(작업 결과 14개 키)와
+    `ControlState`(제어 메타 16개 키)를 따로 정의하고 `GraphState`가 둘을 상속해 그래프 스키마가 된다(전부 `total=False`로 부분
     업데이트 허용). 층별 키가 겹치지 않고 합치면 `GraphState`와 같다는 것, 병렬 쓰기 리듀서가 분리 후에도 유지되는 것, 제어 키는
     Supervisor와 `_worker` 래퍼만 쓴다는 것을 [`tests/test_state_layers.py`](tests/test_state_layers.py)가 고정한다.
     하위 Agent별 Worker State 타입은 두지 않았다. 관점별 결과 키가 Agent마다 달라 충돌하지 않고, Agent별 실행 상태는
@@ -118,7 +118,9 @@ Supervisor 자체는 LLM이 아닌 **결정론적 정책**이다. LLM 판정이 
     생긴다). 한 통으로 설계했던 State를 층으로 나누라는 과제 요구를 타입 수준까지 적용한 설계이며, 별도 하위 State 그래프(서브그래프)까지는 가지 않았다.
 - 관측성 위치 : 결정 로그 전문(step, action, targets, **reason**, 충분도 판정)은 State 밖
   `outputs/traces/{run_id}.jsonl`과 LangSmith로 보낸다 ([`graph/observability.py`](graph/observability.py)).
-  State에는 최신 결정 1건(`last_decision`)만 덮어써서 트레이스의 supervisor 노드 출력에서도 사유가 보인다.
+  State에는 최신 결정 1건(`last_decision`, 결정 시각 `ts` 포함)만 덮어써서 트레이스의 supervisor 노드 출력에서도 사유가 보인다.
+  노드 실패는 `errors`(메시지)와 같은 키로 `error_times`(실패 시각)를 남겨 "언제, 어느 노드에서"를 State만으로도 알 수 있다
+  (`errors`의 형식은 바꾸지 않았고, 병렬 실패는 `merge_dict`로 병합).
   LangSmith에는 매 결정을 supervisor 노드 아래 `decision: {action} → {대상}` span과 `action:*` 태그로,
   종료 후 루트 run에 `supervisor_routes`·`supervisor_reworks`·`quality_passed` feedback 점수로 남겨
   트리·필터만으로 경로가 보인다(끝난 run은 태그 갱신을 받지 않아 사후 기록용 feedback 사용).
@@ -169,6 +171,8 @@ Supervisor 자체는 LLM이 아닌 **결정론적 정책**이다. LLM 판정이 
   최대 4개에 맞춰 노드 실행 수를 제한한다. 각 노드 내부의 기술별 `ThreadPoolExecutor`(2개 스레드)는
   이 설정의 대상이 아니므로 API 전체 동시 요청 수를 4로 보장하지 않는다. 강의자료 PDF 132쪽
   「Fan-out 설계 고려사항 — Concurrency 제어」의 동시 태스크 수·비용 제어 원칙을 적용했다.
+  **한계** : Fan-in 대기 시간 상한(타임아웃)은 아직 두지 않았다. 한 노드가 오래 걸리면 같은 superstep의 다른 노드 결과도 그 노드가
+  끝날 때까지 기다린다. 실패는 재시도·제외(Fall-back)로, 중단은 `--resume`(체크포인트 재처리)로 다루며, 노드별 시간 상한은 후속 과제다.
 - 종료 보장 : ① Supervisor 스텝 상한 `MAX_SUPERVISOR_STEPS=30`(초과 시 보고서만 생성 후 END),
   ② 실패 재시도 `MAX_FAILURE_RETRIES=1`, ③ Agent별 재작업 `MAX_REWORK_PER_AGENT=2`와 전체 재작업 라운드 `MAX_TOTAL_REWORKS=4`(Agent별 상한만으로는
   5개 Agent 합계가 스텝 상한까지 누적되고 같은 지적이 반복돼도 계속 돌아, 비용 상한을 따로 둠), ④ 검증 재작업 라운드
@@ -231,7 +235,7 @@ Supervisor 정책 우선순위 (`graph/supervisor.py` `decide`):
 ├── data/                     # 문서 풀 (raw: 원문, processed: 청크, eval: 검색 평가셋)
 ├── vectorstore/              # FAISS 색인 (git 미포함)
 ├── graph/                    # ── 조정 계층 ──
-│   ├── state.py                 # State 스키마 (제어/페이로드 분리, 리듀서)
+│   ├── state.py                 # State 스키마 (PayloadState·ControlState 레이어드, 리듀서)
 │   ├── supervisor.py            # Supervisor 정책·근거 충분도 게이트·라우팅
 │   ├── workflow.py              # 그래프 조립 (hub-and-spoke, 실패 래퍼)
 │   ├── observability.py         # 외부 결정 로그(JSONL)·LangSmith 결정 span/feedback·결정 이력 부록
@@ -303,6 +307,8 @@ uv run python -m unittest discover -s tests -v   # API 호출 없음
 ## Contributors
 - 전은배 : Supervisor 패턴 설계 및 구현 — 결정론적 라우팅 정책(`graph/supervisor.py`), hub-and-spoke
   그래프 재구성(`graph/workflow.py`), State Schema 제어/페이로드 분리 설계(`graph/state.py`),
+  병렬 쓰기 리듀서(`merge_dict`, 근거·인용 중복 제거), 하위 Agent 실패 래퍼(재시도·제외 Fall-back),
+  SQLite 체크포인트와 `--resume` 재개 구조, 종료 보장 예산(스텝·재시도·재작업 상한),
   기술 조사 재작업 범위 축소(지목된 관점만 재실행)와 재작업 전후 결정 사유 구분, 소비된 재작업 지시·무효화된
   품질 verdict 정리, 최종 보고서 URI화(State에는 `report_path`만, 본문은 파일), 전체 재작업 라운드 예산,
   보고서 제목·참고문헌 정리와 중립성 규칙·보고서/TRL 프롬프트 보강
@@ -318,9 +324,9 @@ uv run python -m unittest discover -s tests -v   # API 호출 없음
   LangGraph 노드 동시 실행 상한 설정(`max_concurrency=4`) 및 비용 제어 근거 문서화
 - 최윤영 : 보고서 품질 평가 노드 설계 — Hybrid(규칙 AND LLM Judge) 4항목(Groundedness·중립성·
   편향 통제·관점 커버리지) 판정 기준과 Judge 프롬프트, 미달 원인별 재작업/재작성 분기 기준
-- 이승준 : 동시 처리·재개/복구 — 병렬 디스패치용 리듀서(`merge_dict`, 근거 중복 제거), 하위 Agent
-  실패 래퍼(Fall-back), SQLite 체크포인트 및 `--resume` 재개, 종료 보장 예산 설정. 재개 실측 검증(관점 병렬
-  평가 중 Ctrl+C·SIGKILL 후 `--resume`로 끝까지 완료)과 체크포인트 크기의 필드별 측정·원인 분석(스냅샷 횟수),
-  정상 종료 run의 체크포인트 정리(`graph/checkpoint_maintenance.py`, 기본 ON·`--keep-checkpoints`)와 테스트
+- 이승준 : 동시 처리·재개/복구 — Agent 내부 기술별 평가의 병렬화(`ThreadPoolExecutor`), 재개 실측 검증(관점 병렬
+  평가 중 Ctrl+C·SIGKILL 후 `--resume`로 끝까지 완료), 체크포인트 크기의 필드별 측정·원인 분석(스냅샷 횟수)과 지속성
+  비용 정리, 정상 종료 run의 체크포인트 정리(`graph/checkpoint_maintenance.py`, 기본 ON·`--keep-checkpoints`)와 테스트,
+  State 레이어드화(`PayloadState`/`ControlState`)와 테스트(`tests/test_state_layers.py`)
 - 박인애 : 관측성·보고서 출력 — 외부 결정 로그(JSONL)·LangSmith 연동(run_id 상관 키), `[R#]` 인용
   카탈로그와 REFERENCE 연결, 10쪽 분량 검사(PDF 쪽수 측정), 제출용 Agent-Output PDF
