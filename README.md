@@ -40,7 +40,9 @@
   재정렬, `doc_type`/`technology` 필터로 Agent별 검색 범위 분리
 - 시장·이해관계자 Agent는 Tavily 외부 검색을 tool-calling으로 호출해 실시간 근거 보강
 - **Supervisor 근거 충분도 게이트** : 관점별 근거 수(≥3)·출처 다양성(≥2종)·`insufficient_evidence`
-  판정을 결정론적으로 계산해, 미달 관점에만 재작업 지시(`retry_hints`)를 내려보냄
+  판정을 결정론적으로 계산해, 미달 관점에만 재작업 지시(`retry_hints`)를 내려보냄.
+  Tavily만 쓰는 이해관계자 관점도 실제 실행 트레이스에서 근거 15건·출처 15종으로 통과해
+  공통 기준을 유지함(2026-10-07 실행, `outputs/traces/`의 `sufficiency` 확인)
 - **Faithfulness Check** : 종합 claim을 근거와 대조, 실패 claim의 출처 Agent만 재작업 대상으로 Supervisor에 보고
 - **Fall-back** : 하위 Agent 예외 → 1회 재시도 → 그래도 실패하면 **제외**하고 보고서에
   "정보 부족(실행 실패로 제외)"으로 표기 (병렬 실행 중 한 Agent가 죽어도 그래프는 계속)
