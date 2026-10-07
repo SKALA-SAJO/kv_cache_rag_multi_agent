@@ -35,7 +35,7 @@ from agents import (
     tech_research,
     trl_evaluation,
 )
-from graph.observability import Timer, log_event, record_timing
+from graph.observability import Timer, log_event, now_ts, record_timing
 from graph.state import GraphState
 from graph.supervisor import WORKER_NODES, initial_control_state, route_from_supervisor, supervisor_node
 from rubrics import EVALUATION_RUBRIC
@@ -77,7 +77,8 @@ def _worker(name: str, fn: Callable[[GraphState], dict]) -> Callable[[GraphState
         print(f"[{name}] {status} - {timer.elapsed:.1f}초", flush=True)
         update["node_status"] = {name: status}
         if error:
-            update["errors"] = {name: error}
+            update["errors"] = {name: error}  # 형식 유지: Supervisor가 문자열로 읽는다
+            update["error_times"] = {name: now_ts()}  # 언제 실패했는가 (병렬 실패는 merge_dict로 병합)
         return update
 
     return wrapper

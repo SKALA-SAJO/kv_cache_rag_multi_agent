@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -46,6 +45,16 @@ class DecisionAppendixTest(unittest.TestCase):
 
     def test_missing_log_gives_empty_appendix(self) -> None:
         self.assertEqual(obs.render_decision_appendix("no-such-run"), "")
+
+    def test_appendix_goes_right_before_reference(self) -> None:
+        # 가이드 목차: 첫 챕터 SUMMARY, 마지막 챕터 REFERENCE → 부록은 REFERENCE 앞에 둔다
+        report = "## SUMMARY\n요약\n\n## 6. 한계\n내용\n\n## REFERENCE\n- [R1] 출처\n"
+        merged = obs.insert_appendix(report, "## 부록. Supervisor 결정 이력\n| 표 |\n")
+        chapters = [line for line in merged.splitlines() if line.startswith("## ")]
+        self.assertEqual(chapters, ["## SUMMARY", "## 6. 한계", "## 부록. Supervisor 결정 이력", "## REFERENCE"])
+        self.assertTrue(merged.rstrip().endswith("- [R1] 출처"))
+        self.assertEqual(obs.insert_appendix(report, ""), report)
+        self.assertTrue(obs.insert_appendix("본문", "## 부록").endswith("## 부록"))  # REFERENCE 없으면 끝에
 
 
 class TraceDecisionTest(unittest.TestCase):
@@ -94,8 +103,7 @@ class TestRunTracingTest(unittest.TestCase):
         # .env(LANGSMITH_TRACING=true)를 override로 다시 읽는 모듈을 import해도 테스트 중 트레이싱은 꺼져 있다
         import tests.evaluate_generation  # noqa: F401
 
-        self.assertEqual(os.environ.get("LANGSMITH_TRACING"), "false")
-        self.assertFalse(obs.tracing_is_enabled())
+        self.assertFalse(obs.tracing_is_enabled())  # 환경변수가 아니라 langsmith 전역 설정으로 꺼짐
 
 
 if __name__ == "__main__":

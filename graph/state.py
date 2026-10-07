@@ -23,10 +23,11 @@
     (graph/checkpoint_maintenance.py). 인용문 길이 축소는 근거 원본을 깎아 채택하지 않았다(README 참고).
   - 상관 : run_id 하나가 LangGraph thread_id(체크포인트), LangSmith 루트 run id/metadata,
     외부 결정 로그 파일명, 보고서 파일명을 모두 잇는 키다.
-  - 재개/복구 : node_status/attempts/errors가 "어디까지 끝났고 무엇이 실패했는지"를 담는다.
+  - 재개/복구 : node_status/attempts/errors가 "어디까지 끝났고 무엇이 실패했는지"를, error_times가
+    "언제 실패했는지"를 담는다(결과 키 타임스탬프 — last_decision에도 ts).
     SqliteSaver 체크포인트 + 이 필드만으로 `app.py --resume <run_id>` 재개가 가능하다.
   - 동시 처리 : Supervisor가 여러 관점 Agent를 한 superstep에 병렬 디스패치하므로 동시에
-    쓰이는 필드(node_status, errors, evidence_items, references)에는 리듀서를 둔다.
+    쓰이는 필드(node_status, errors, error_times, evidence_items, references)에는 리듀서를 둔다.
     관점별 결과는 Agent마다 키가 달라(trl_evaluation 등) 충돌하지 않는다.
   - 종료 보장 : step_count/max_steps(Supervisor 스텝 상한), attempts(실패 재시도 상한),
     rework_counts(Agent별 재작업 상한), rework_rounds(전체 재작업 라운드 상한),
@@ -118,11 +119,12 @@ class ControlState(TypedDict, total=False):
     step_count: int  # Supervisor 실행 횟수 (종료 가드)
     max_steps: int
     next_nodes: list[str]  # Supervisor 결정 → 조건부 엣지가 읽는 값 (END면 [])
-    last_decision: dict[str, Any]  # {step, action, targets, reason} 최신 1건만 (전문은 외부 로그)
+    last_decision: dict[str, Any]  # {step, action, targets, reason, ts} 최신 1건만 (전문은 외부 로그)
 
     node_status: Annotated[dict[str, str], merge_dict]  # {node: NodeStatus}
     attempts: dict[str, int]  # 실패 재시도 판단용 디스패치 횟수 (Supervisor만 씀)
     errors: Annotated[dict[str, str], merge_dict]  # {node: 최근 에러 메시지}
+    error_times: Annotated[dict[str, str], merge_dict]  # {node: 최근 실패 시각} — errors와 같은 키, 형식은 그대로
     rework_counts: dict[str, int]  # 근거 부족에 따른 재작업 요청 횟수 (Supervisor만 씀)
     retry_hints: dict[str, str]  # Supervisor → 하위 Agent 재작업 지시 (Agent 간 직접 통신 금지, 소비 후 Supervisor가 비움)
     sufficiency: dict[str, dict[str, Any]]  # 관점별 근거 충분도 판정 {agent: {sufficient, per_technology, reason}}

@@ -44,7 +44,7 @@ class StateLayerTest(unittest.TestCase):
 
     def test_reducers_survive_the_split(self) -> None:
         hints = typing.get_type_hints(GraphState, include_extras=True)
-        expected = {"node_status": merge_dict, "errors": merge_dict,
+        expected = {"node_status": merge_dict, "errors": merge_dict, "error_times": merge_dict,
                     "references": dedupe_references, "evidence_items": dedupe_evidence_items}
         for key, reducer in expected.items():
             self.assertIn(reducer, typing.get_args(hints[key])[1:], key)
@@ -71,7 +71,7 @@ class WorkerWritesControlKeysTest(unittest.TestCase):
             raise RuntimeError("simulated")
 
         update = self._run_worker(boom)
-        self.assertEqual(set(update), {"node_status", "errors"})
+        self.assertEqual(set(update), {"node_status", "errors", "error_times"})  # 실패 시각도 제어 메타
         self.assertEqual(update["node_status"], {"synthesis": "failed"})
         self.assertIn("simulated", update["errors"]["synthesis"])
 

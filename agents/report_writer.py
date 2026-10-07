@@ -4,11 +4,11 @@ import json
 import re
 from datetime import datetime
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agents.base import build_reference_catalog, get_llm, load_prompt
 from config import settings
-from graph.observability import summarize_decisions
+from graph.observability import log_event, summarize_decisions
 from graph.state import GraphState
 from scripts.download_papers import CORPUS_SOURCES
 
@@ -102,6 +102,8 @@ GRAPH_DESIGN_NOTE = (
 _NON_REF_CITATION = re.compile(r"\s*\[(?!R\d)[A-Za-z_]+\]")
 # REFERENCE 항목 앞머리의 ID 표기 변형: "- R1 ...", "- (R1) ...", "- R1. ...", "- R1: ..." → "- [R1] ..."
 _REF_ID_PREFIX = re.compile(r"^(\s*[-*]\s*)\(?(R\d+)\)?[.:)]?\s+", flags=re.MULTILINE)
+# "- 저자(연도). 제목. [R1]"처럼 ID가 항목 끝에 붙은 변형 (이미 [R#]로 시작하는 항목은 제외)
+_REF_ID_SUFFIX = re.compile(r"^(\s*[-*]\s*)(?!\[R\d+\])(.+?)\s*\[(R\d+)\]\s*$", flags=re.MULTILINE)
 _REF_ANNOTATION = re.compile(r"\s*\[(?:원문|external_search|implementation_document|market_document|technical_paper|domain_benchmark)[^\]]*\]")
 
 
@@ -111,7 +113,7 @@ def clean_report(markdown: str) -> str:
     - 본문의 `[R#]`가 아닌 가짜 인용 태그 (예: `[orchestration]`)
     - REFERENCE 항목 뒤의 파일명·doc_type 주석 (예: `[원문: infinigen.pdf]`)
     - REFERENCE 절의 `(참고) ...` 같은 메타 설명 문단
-    - REFERENCE 항목 ID 표기 변형(`- R1 ...`)을 `- [R1] ...`로 정규화 (인용 검증 오탐 방지)
+    - REFERENCE 항목 ID 표기 변형(`- R1 ...`, `- ... [R1]`)을 `- [R1] ...`로 정규화 (인용 검증 오탐 방지)
     """
     head, sep, tail = markdown.partition("## REFERENCE")
     head = _NON_REF_CITATION.sub("", head)
@@ -121,7 +123,8 @@ def clean_report(markdown: str) -> str:
             for line in tail.splitlines()
             if not line.strip().startswith(("(참고", "（참고", "※"))
         ]
-        tail = _REF_ID_PREFIX.sub(r"\1[\2] ", "\n".join(lines)).rstrip() + "\n"
+        tail = _REF_ID_SUFFIX.sub(r"\1[\3] \2", "\n".join(lines))
+        tail = _REF_ID_PREFIX.sub(r"\1[\2] ", tail).rstrip() + "\n"
     return head + sep + tail
 
 
@@ -178,6 +181,51 @@ def complete_references(markdown: str, catalog: list[dict]) -> str:
         url = f" {c['url']}" if c.get("url") and c.get("url") != title else ""
         lines.append(f"- {title}.{url} [{ref_id}]")  # 본 목록과 같은 "제목. URL [R#]" 형식
     return head + sep + tail.rstrip() + "\n\n기타 (웹페이지)\n\n" + "\n".join(lines) + "\n"
+
+
+CITATION_REPAIR_PROMPT = (
+    "위 보고서는 인용 규칙 자체 점검에서 미달이다:\n{issues}\n\n"
+    "내용·구성·표현은 그대로 두고, 근거 주장 문장에 reference_catalog의 [R#] 인용만 보강한 "
+    "전체 보고서를 처음부터 끝까지 다시 출력하라. 카탈로그에 없는 ID는 쓰지 않는다."
+)
+
+
+def citation_issues(report: str, catalog: list[dict]) -> list[str]:
+    """품질 평가와 같은 규칙으로 보고서의 인용 형식만 점검한다 (근거 수집 상태와 무관한 항목만).
+
+    보고서 작성 단계에서 고칠 수 있는 것 — 관점 절 인용 누락, 본문 인용 수, 카탈로그 밖 ID,
+    외부 검색 출처 미인용 — 만 본다. 근거 편중(evidence_items 비율)은 작성 단계에서 못 고치므로 제외.
+    """
+    from agents.quality_evaluation import rule_bias_control, rule_groundedness
+
+    issues = rule_groundedness(report, catalog)["issues"]
+    issues += rule_bias_control(report, catalog, [])["issues"]
+    return issues
+
+
+def generate_report(llm, user_content: str, catalog: list[dict], run_id: str = "") -> str:
+    """보고서를 생성하고, 인용 자체 점검에 미달하면 1회만 보정 요청한다 (생성 → 점검 → 보정).
+
+    재작성 시 LLM이 품질 피드백에 집중하다 [R#] 인용을 대량으로 빠뜨리는 사례(24개 → 4개)가 있었다.
+    그대로 품질 평가로 넘기면 재작업·재작성 루프(1회 3~5분)를 소모하므로, 결정론적 규칙으로 먼저 잡는다.
+    보정본이 더 나을 때만 채택하고, 카탈로그가 비면(인용할 출처 없음) 보정하지 않는다.
+    """
+    messages = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_content)]
+    draft = llm.invoke(messages).content
+    report = complete_references(clean_report(draft), catalog)
+    issues = citation_issues(report, catalog)
+    if not issues or not catalog:
+        return report
+
+    print(f"[report_writer] 인용 자체 점검 미달 {len(issues)}건 → 1회 보정 요청", flush=True)
+    messages += [AIMessage(content=draft), HumanMessage(content=CITATION_REPAIR_PROMPT.format(
+        issues="\n".join(f"- {i}" for i in issues)))]
+    repaired = complete_references(clean_report(llm.invoke(messages).content), catalog)
+    remaining = citation_issues(repaired, catalog)
+    adopted = len(remaining) < len(issues)
+    log_event(run_id, "report_writer", "citation_repair", issues=issues, remaining=remaining, adopted=adopted)
+    print(f"[report_writer] 보정 {'채택' if adopted else '미채택'} (미달 {len(issues)}건 → {len(remaining)}건)", flush=True)
+    return repaired if adopted else report
 
 
 def run(state: GraphState) -> dict:
@@ -293,11 +341,10 @@ def run(state: GraphState) -> dict:
     }
     user_content = json.dumps(payload, ensure_ascii=False, indent=2)
 
-    llm = get_llm("generator")
-    response = llm.invoke(
-        [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_content)]
+    # 생성 → 인용 자체 점검·1회 보정(generate_report) → 제목 부착 순서. 제목은 인용 점검 대상이 아님.
+    report_markdown = add_title(
+        generate_report(get_llm("generator"), user_content, catalog, state.get("run_id", "")), state
     )
-    report_markdown = add_title(complete_references(clean_report(response.content), catalog), state)
 
     settings.outputs_path.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
