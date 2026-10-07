@@ -65,6 +65,25 @@ class QualityRuleTest(unittest.TestCase):
         evidence = [{"document_id": "only.pdf"}] * 9 + [{"document_id": "other.pdf"}]
         self.assertFalse(qe.rule_bias_control(GOOD_REPORT, self.catalog, evidence)["passed"])
 
+    def test_neutrality_ignores_negated_winner_language_and_allows_conditional_comparison(self) -> None:
+        negated = GOOD_REPORT.replace(
+            "특정 기술을 승자로 선정하지 않는다",
+            "최종 승자를 결정하기 어렵다",
+        )
+        self.assertTrue(qe.rule_neutrality(negated)["passed"])
+
+        conditional = GOOD_REPORT.replace(
+            "MLA는 KV Cache를 줄인다 [R1]. InfiniGen은 프리페치한다 [R2].",
+            "장문맥 환경에서는 MLA가 InfiniGen보다 더 유리하다 [R1]. InfiniGen은 프리페치한다 [R2].",
+        )
+        self.assertTrue(qe.rule_neutrality(conditional)["passed"])
+
+        unconditional = GOOD_REPORT.replace(
+            "MLA는 KV Cache를 줄인다 [R1]. InfiniGen은 프리페치한다 [R2].",
+            "MLA가 InfiniGen보다 더 유리하다 [R1]. InfiniGen은 프리페치한다 [R2].",
+        )
+        self.assertFalse(qe.rule_neutrality(unconditional)["passed"])
+
     def test_hybrid_requires_both_rule_and_judge(self) -> None:
         rules = {name: {"passed": True, "issues": []} for name in qe.CRITERIA + ["format"]}
         judgement = QualityJudgement(
