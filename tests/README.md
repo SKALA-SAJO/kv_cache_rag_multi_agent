@@ -31,6 +31,9 @@ uv run python -m unittest discover -s tests -p "test_*.py" -v
 `test_app_cli.py`는 대역 Agent로 실제 `app.main()`과 SQLite 그래프를 실행한다. 정상 종료 시
 `[app] 체크포인트 정리:` 로그가 정확히 한 줄 나오고 마지막 체크포인트만 남는지 확인하며,
 `--keep-checkpoints`에서는 정리 로그 없이 이력이 유지되는지 확인한다. API·PDF 생성은 대역으로 격리한다.
+최종 제출 목차 테스트는 PDF 변환 함수에 전달한 최종 Markdown 파일을 읽고, 첫 챕터 SUMMARY와
+마지막 챕터 REFERENCE를 확인한다. 결정 이력 부록도 후처리 결과에 포함하여 검사하므로,
+본문이 올바르더라도 REFERENCE 뒤에 부록이 붙으면 실패한다. PDF 레이아웃·실제 쪽수는 별도 제출 검증 대상이다.
 
 ## 실제 API 통합 테스트 (비용 발생 가능)
 
