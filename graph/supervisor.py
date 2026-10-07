@@ -17,6 +17,7 @@ Supervisor는 매 스텝 현재 State(수집된 관점, 근거 충분도, 검증
   2. 관점 수집      : 미수집/실패 관점 → 병렬 디스패치 (실패는 재시도 상한 후 '제외')
   3. 근거 충분도    : 관점 × 기술별 evidence 수·출처 다양성·insufficient_evidence 판정 → 부족 관점만 재작업
   4. 종합/검증      : synthesis → faithfulness_check, 검증 실패 claim의 출처 Agent만 재작업
+                      (tech_research가 출처면 기술 근거를 다시 모으고, 함께 지목된 관점만 재실행)
   5. 보고서/품질    : report_writer → quality_evaluation
   6. 품질 미달 루프 : 관점 문제 → 해당 관점 재작업, 서술 문제 → 보고서 재작성, 예산 소진 → END
 """
@@ -157,9 +158,16 @@ class _Decision:
             self.rework_counts[node] = self.rework_counts.get(node, 0) + 1
         self.updates["rework_counts"] = self.rework_counts
         self.updates["retry_hints"] = hints
-        # 기술 조사를 다시 하면 모든 관점이 그 결과에 의존하므로 함께 다시 돈다.
+        # 기술 조사 재작업 범위: 기술 근거(evidence_items)를 다시 수집하고, 함께 지목된 관점만
+        # 다시 돈다. 지목되지 않은 관점은 결과를 유지한다 — 각 관점의 판단 근거는 자체 RAG·외부
+        # 검색이고 technical_evidence는 참고 요약이라, 요약 갱신만으로 4관점을 모두 재실행하는
+        # 비용(실측 1라운드 약 3~4분)이 실익보다 크다. 트레이드오프: 유지된 관점은 이전 요약을
+        # 참고한 상태로 남는다(결정 사유에 명시).
         if TECH_NODE in targets:
-            self.set_status(list(PERSPECTIVE_NODES), "pending")
+            co_targets = [t for t in targets if t in PERSPECTIVE_NODES]
+            self.set_status(co_targets, "pending")
+            kept = [PERSPECTIVE_NODES[n] for n in PERSPECTIVE_NODES if n not in co_targets]
+            reason += f" — 기술 조사 후 {[PERSPECTIVE_NODES[n] for n in co_targets] or '없음'}만 재실행, {kept} 결과 유지"
             targets = [TECH_NODE]
         self.set_status(DOWNSTREAM_OF_PERSPECTIVES, "pending")
         self.updates["quality_feedback"] = ""
@@ -211,9 +219,17 @@ def _policy(d: _Decision, state: GraphState, step: int) -> tuple[list[str], str,
         log_event(state.get("run_id", ""), "supervisor", "fallback_exclude", nodes=excluded,
                   errors={n: state.get("errors", {}).get(n, "") for n in excluded})
     if to_run or retried:
-        missing = [PERSPECTIVE_NODES[n] for n in to_run + retried]
-        reason = f"미수집 관점 {missing}" + (f" (실패 재시도: {retried})" if retried else "")
-        return d.dispatch(sorted(to_run + retried), "collect_perspectives", reason)
+        hints = state.get("retry_hints", {})
+        reworked = [PERSPECTIVE_NODES[n] for n in to_run if n in hints]
+        fresh = [PERSPECTIVE_NODES[n] for n in to_run if n not in hints]
+        parts = []
+        if fresh:
+            parts.append(f"미수집 관점 {fresh}")
+        if reworked:
+            parts.append(f"재작업 지시 관점 {reworked} (갱신된 기술 근거 반영)")
+        if retried:
+            parts.append(f"실패 재시도 {[PERSPECTIVE_NODES[n] for n in retried]}")
+        return d.dispatch(sorted(to_run + retried), "collect_perspectives", " / ".join(parts))
 
     # 3. 근거 충분도 게이트 ─────────────────────────────────────────────────
     sufficiency = {
@@ -235,11 +251,17 @@ def _policy(d: _Decision, state: GraphState, step: int) -> tuple[list[str], str,
         if status == "failed" and d.resolve_failure(node):
             return d.dispatch([node], "retry_failed", f"{node} 실패 재시도")
         if status in _NEEDS_RUN:
-            reason = (
-                "관점 수집·충분도 게이트 통과 — 관점 간 일치/상충 종합"
-                if node == SYNTHESIS_NODE
-                else "종합 claim이 수집 근거로 뒷받침되는지 검증 필요"
-            )
+            reworked = sorted(state.get("rework_counts", {}))
+            if node == SYNTHESIS_NODE:
+                reason = (
+                    f"재작업 결과({reworked}) 반영 — 관점 간 일치/상충 재종합"
+                    if state.get("synthesis") else "관점 수집·충분도 게이트 통과 — 관점 간 일치/상충 종합"
+                )
+            else:
+                reason = (
+                    f"재종합된 claim 재검증 ({state.get('faithfulness_rounds', 0)}/{settings.max_faithfulness_rounds}라운드 재작업 후)"
+                    if state.get("faithfulness_check") else "종합 claim이 수집 근거로 뒷받침되는지 검증 필요"
+                )
             return d.dispatch([node], "synthesize" if node == SYNTHESIS_NODE else "verify", reason)
 
     check = state.get("faithfulness_check") or {}
@@ -268,7 +290,16 @@ def _policy(d: _Decision, state: GraphState, step: int) -> tuple[list[str], str,
         if status in _NEEDS_RUN:
             if node == REPORT_NODE:
                 rev = state.get("report_revisions", 0)
-                reason = "근거 충분성 확인 완료 — 보고서 작성" if rev == 0 else f"품질 미달 피드백 반영 재작성 ({rev}회차)"
+                if rev:
+                    reason = f"품질 미달 피드백 반영 재작성 ({rev}회차)"
+                elif state.get("final_report") and state.get("quality_feedback"):
+                    reason = "품질 미달 원인 관점 재작업 반영 — 보고서 재작성"
+                elif state.get("final_report"):
+                    reason = "관점 재작업 결과 반영 — 보고서 재작성"
+                else:
+                    unverified = len((state.get("faithfulness_check") or {}).get("insufficient_evidence_claims", []))
+                    reason = "근거 충분성 확인 완료 — 보고서 작성" + (
+                        f" (검증 미통과 claim {unverified}건은 '근거 부족으로 검증되지 않음' 표기)" if unverified else "")
                 return d.dispatch([node], "write_report", reason)
             return d.dispatch([node], "evaluate_quality", "보고서 생성 후 품질 평가(필수 게이트)")
 
