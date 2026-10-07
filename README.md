@@ -157,6 +157,12 @@ Supervisor 정책 우선순위 (`graph/supervisor.py` `decide`):
 3. 근거 충분도 게이트(미달 관점만 재작업) / 4. 종합 → 검증(실패 claim 출처 재작업) /
 5. 보고서 → 품질 평가 / 6. 품질 verdict: 통과 → END, 근거 문제 → 관점 재작업, 서술 문제 → 재작성, 예산 소진 → END
 
+재작업 범위: 검증 실패 claim의 출처에 기술 조사(`tech_research`)가 포함되면 기술 근거를 다시 수집하되,
+**함께 지목된 관점만** 재실행하고 나머지 관점은 결과를 유지한다(각 관점의 판단 근거는 자체 RAG·외부
+검색이고 기술 조사 요약은 참고 맥락이므로, 4관점 전체 재실행 비용 대비 실익이 작음). 유지된 관점이
+이전 요약을 참고한 상태라는 점은 결정 사유(`reason`)에 명시된다. 재작업 이후의 종합·검증·보고서 결정은
+사유에 "재작업 결과 반영"으로 표시되어 첫 실행과 트레이스에서 구분된다.
+
 
 ## Directory Structure
 ```
@@ -212,7 +218,8 @@ uv run python -m unittest discover -s tests -v   # API 호출 없음
 
 ## Contributors
 - 전은배 : Supervisor 패턴 설계 및 구현 — 결정론적 라우팅 정책(`graph/supervisor.py`), hub-and-spoke
-  그래프 재구성(`graph/workflow.py`), State Schema 제어/페이로드 분리 설계(`graph/state.py`)
+  그래프 재구성(`graph/workflow.py`), State Schema 제어/페이로드 분리 설계(`graph/state.py`),
+  기술 조사 재작업 범위 축소(지목된 관점만 재실행)와 재작업 전후 결정 사유 구분
 - 박성우 : 체크포인트 재개 검증 테스트 — 대역 Agent 중단 후 임시 SQLite DB를 다시 열어 동일
   `thread_id`의 `invoke(None, ...)` 재개·완료를 검증. 라이브 통합 테스트에 `quality_verdict`와
   `next_nodes == []` 검증을 추가하고, `RUN_LIVE_TESTS=1`일 때만 실행하도록 기존 조건 유지

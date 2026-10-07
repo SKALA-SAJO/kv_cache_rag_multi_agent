@@ -121,6 +121,51 @@ class SupervisorPolicyTest(unittest.TestCase):
                                               faithfulness_rounds=settings.max_faithfulness_rounds))
         self.assertEqual((targets, action), (["report_writer"], "write_report"))
 
+    def test_tech_rework_reruns_only_co_targeted_perspectives(self) -> None:
+        status = {**initial_control_state("t")["node_status"], **{n: "done" for n in PERSPECTIVE_NODES},
+                  "tech_research": "done", "synthesis": "done", "faithfulness_check": "done"}
+        check = {"passed": False, "agents_to_retry": ["stakeholder_evaluation", "tech_research"],
+                 "retry_hints": {"tech_research": "t", "stakeholder_evaluation": "s"},
+                 "insufficient_evidence_claims": ["c"]}
+        sufficient = {"evidence_items": [e for n in PERSPECTIVE_NODES for e in _evidence(n, 4, 2)],
+                      **{n: {"A": {}, "B": {}} for n in PERSPECTIVE_NODES}}
+        targets, action, reason, updates = decide(_state(node_status=status, faithfulness_check=check, **sufficient))
+        self.assertEqual((targets, action), (["tech_research"], "rework_unfaithful"))
+        self.assertEqual(updates["node_status"]["stakeholder_evaluation"], "pending")
+        for kept in ("trl_evaluation", "market_evaluation", "domain_evaluation"):
+            self.assertNotIn(kept, updates["node_status"])  # 지목되지 않은 관점은 done 유지
+        self.assertIn("결과 유지", reason)
+
+        # 기술 조사 완료 후: 재작업 지시받은 관점만 디스패치되고 사유가 '재작업'으로 구분된다
+        status2 = {**status, **updates["node_status"], "tech_research": "done"}
+        targets, action, reason, _ = decide(_state(node_status=status2, retry_hints=updates["retry_hints"],
+                                                   rework_counts=updates["rework_counts"], **sufficient))
+        self.assertEqual((targets, action), (["stakeholder_evaluation"], "collect_perspectives"))
+        self.assertIn("재작업 지시 관점", reason)
+        self.assertNotIn("미수집", reason)
+
+    def test_decision_reasons_distinguish_first_run_from_rework(self) -> None:
+        done = {n: "done" for n in initial_control_state("t")["node_status"]}
+        sufficient = {"evidence_items": [e for n in PERSPECTIVE_NODES for e in _evidence(n, 4, 2)],
+                      **{n: {"A": {}, "B": {}} for n in PERSPECTIVE_NODES}}
+        pending_report = {**done, "report_writer": "pending", "quality_evaluation": "pending"}
+        _, _, first, _ = decide(_state(node_status=pending_report, **sufficient))
+        self.assertIn("근거 충분성 확인 완료", first)
+        _, _, again, _ = decide(_state(node_status=pending_report, final_report="old",
+                                       rework_counts={"domain_evaluation": 1}, **sufficient))
+        self.assertIn("재작업 결과 반영", again)
+        _, _, quality, _ = decide(_state(node_status=pending_report, final_report="old",
+                                         quality_feedback="fix", **sufficient))
+        self.assertIn("품질 미달 원인 관점 재작업 반영", quality)
+
+        pending_synth = {**done, **{n: "pending" for n in ("synthesis", "faithfulness_check",
+                                                            "report_writer", "quality_evaluation")}}
+        _, _, synth_first, _ = decide(_state(node_status=pending_synth, **sufficient))
+        _, _, synth_again, _ = decide(_state(node_status=pending_synth, synthesis={"agreements": []},
+                                             rework_counts={"trl_evaluation": 1}, **sufficient))
+        self.assertIn("충분도 게이트 통과", synth_first)
+        self.assertIn("재종합", synth_again)
+
     def test_step_cap_still_runs_quality_gate_then_terminates(self) -> None:
         cap = settings.max_supervisor_steps
         done = {n: "done" for n in initial_control_state("t")["node_status"]}
@@ -226,6 +271,37 @@ class SupervisorGraphTest(unittest.TestCase):
         self.assertEqual(result["next_nodes"], [])
         self.assertLessEqual(result["rework_counts"]["market_evaluation"], settings.max_rework_per_agent)
         self.assertLessEqual(result["report_revisions"], settings.max_report_revisions)
+
+
+class TechReworkScopeGraphTest(unittest.TestCase):
+    def test_tech_rework_does_not_rerun_untargeted_perspectives(self) -> None:
+        calls: list[str] = []
+        runners = _fake_runners(calls, fail_once=set())
+        faith_calls = 0
+
+        def faith_fails_once(state):
+            nonlocal faith_calls
+            faith_calls += 1
+            calls.append("faithfulness_check")
+            if faith_calls == 1:
+                return {"faithfulness_check": {
+                    "passed": False, "agents_to_retry": ["tech_research", "stakeholder_evaluation"],
+                    "retry_hints": {}, "insufficient_evidence_claims": ["c"]}}
+            return {"faithfulness_check": {"passed": True, "agents_to_retry": []}}
+
+        runners["faithfulness_check"] = faith_fails_once
+        with tempfile.TemporaryDirectory() as tmp, patch.object(settings, "outputs_dir", tmp), \
+                patch.dict(workflow.AGENT_RUNNERS, runners):
+            result = workflow.build_graph().invoke(
+                {"research_question": "q", "run_id": "tech-scope"}, config={"recursion_limit": 80})
+
+        self.assertEqual(calls.count("tech_research"), 2)
+        self.assertEqual(calls.count("stakeholder_evaluation"), 2)  # 함께 지목 → 재실행
+        self.assertEqual(calls.count("trl_evaluation"), 1)  # 미지목 → 결과 유지
+        self.assertEqual(calls.count("domain_evaluation"), 1)
+        # market은 첫 실행 단일 출처로 충분도 게이트 재작업 1회 → 2회 (tech 재작업과 무관)
+        self.assertEqual(calls.count("market_evaluation"), 2)
+        self.assertEqual(result["next_nodes"], [])
 
 
 class CheckpointResumeTest(unittest.TestCase):
