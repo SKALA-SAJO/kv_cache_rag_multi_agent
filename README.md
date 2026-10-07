@@ -224,7 +224,9 @@ uv run python -m unittest discover -s tests -v   # API 호출 없음
   기술 조사 재작업 범위 축소(지목된 관점만 재실행)와 재작업 전후 결정 사유 구분
 - 박성우 : 체크포인트 재개 검증 테스트 — 대역 Agent 중단 후 임시 SQLite DB를 다시 열어 동일
   `thread_id`의 `invoke(None, ...)` 재개·완료를 검증. 라이브 통합 테스트에 `quality_verdict`와
-  `next_nodes == []` 검증을 추가. `RUN_LIVE_TESTS` 미설정·`0`·`1` 실행 조건을 API 없는 회귀 테스트로 검증
+  `next_nodes == []` 및 최종 품질 노드 완료 검증을 추가. `RUN_LIVE_TESTS` 미설정·`0`·`1` 실행 조건과
+  이전 품질 verdict의 오인 방지를 API 없는 회귀 테스트로 검증. 재개 시 완료된 병렬 관점의
+  중복 실행 방지 검증과 보고서 저장 테스트의 검색 의존성 격리
 - 서지원 : 근거 충분도 게이트 기준 설계(근거 수·출처 다양성·정보 부족 판정), 기술 조사·기술 성숙도
   Agent State 경량화(원문 청크 `retrieved_documents` 제거로 체크포인트 비용 절감)
 - 최윤영 : 보고서 품질 평가 노드 설계 — Hybrid(규칙 AND LLM Judge) 4항목(Groundedness·중립성·

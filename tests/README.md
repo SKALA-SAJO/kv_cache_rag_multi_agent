@@ -14,6 +14,10 @@ uv run python -m unittest discover -s tests -p "test_*.py" -v
 실행을 중단한 뒤 임시 SQLite DB를 닫고 다시 연다. 새 그래프에서 같은 `thread_id`로
 `invoke(None, ...)`를 호출하여 보고서·품질 평가·종료까지 재개되는지, 이미 완료한 기술
 조사를 반복하지 않는지, 다른 thread에 상태가 섞이지 않는지 확인한다. 실제 API를 호출하지 않는다.
+병렬 관점의 완료 결과가 SQLite에 저장된 뒤 중단시키며, 재개 시 완료된 기술 성숙도·이해관계자
+관점은 반복하지 않고 시장성 관점은 충분도 정책에 따른 재작업만 수행하는지 호출 횟수로 검증한다.
+
+보고서 저장 테스트는 LLM과 Retriever를 모두 대역으로 교체하여 로컬 데이터·색인·모델 없이 실행한다.
 
 `test_live_test_gate.py`는 라이브 테스트 모듈을 격리해 로드하고, `RUN_LIVE_TESTS` 미설정·`0`이면
 생략되고 `1`이면 실행되는지 unittest 실행 결과로 확인한다. 테스트 본문은 대역으로 교체하므로
@@ -31,6 +35,9 @@ RUN_LIVE_TESTS=1 uv run python -m unittest tests.test_integration_live -v
 이 테스트는 실제 OpenAI·Tavily를 호출하고 `outputs/`에 Markdown 보고서를 만든다.
 Supervisor 구조에 맞춰 `quality_verdict`와 종료 상태(`next_nodes == []`)도 확인한다.
 품질 예산 소진으로 미달 상태에서 종료할 수도 있으므로 종료 여부와 품질 통과 여부는 구분한다.
+최종 품질 노드의 `done` 상태도 확인하여, 평가 오류로 이전 보고서의 verdict만 남은 종료를 거부한다.
+`test_live_result_contract.py`는 위 결과 판정을 대역 그래프와 임시 파일로 검증한다. 완료된 품질
+통과·미달은 허용하고, `failed`·`excluded` 상태에 남은 이전 verdict는 거부하며 실제 API는 호출하지 않는다.
 
 ## Retrieval 평가 (Hit@K / MRR)
 

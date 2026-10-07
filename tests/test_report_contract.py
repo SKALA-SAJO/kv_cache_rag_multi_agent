@@ -51,7 +51,8 @@ class ReportContractTest(unittest.TestCase):
 
     def test_report_is_saved_as_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
-            with patch("agents.report_writer.get_llm", return_value=_FakeLLM()):
+            with patch("agents.report_writer.get_llm", return_value=_FakeLLM()), \
+                    patch("agents.report_writer.retrieve", return_value=[]):
                 with patch.object(report_writer.settings, "outputs_dir", temporary_dir):
                     result = report_writer.run(
                         {

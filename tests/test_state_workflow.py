@@ -11,6 +11,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from threading import Event
 from unittest.mock import patch
 
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -336,11 +337,16 @@ class CheckpointResumeTest(unittest.TestCase):
         runners = _fake_runners(calls, fail_once=set())
         domain_runner = runners["domain_evaluation"]
         domain_attempts = 0
+        completed_peers = {name: Event() for name in PERSPECTIVE_NODES if name != "domain_evaluation"}
 
         def interrupt_once(state):
             nonlocal domain_attempts
             domain_attempts += 1
             if domain_attempts == 1:
+                # 다른 관점의 결과가 DB에 저장된 뒤 중단하여 실행 순서에 의존하지 않는다.
+                for name, completed in completed_peers.items():
+                    if not completed.wait(timeout=10):
+                        raise AssertionError(f"{name} 체크포인트 저장 시간 초과")
                 # RuntimeError는 _worker가 처리하므로 실제 Ctrl+C처럼 실행을 끊는다.
                 raise KeyboardInterrupt("simulated checkpoint interruption")
             return domain_runner(state)
@@ -356,8 +362,19 @@ class CheckpointResumeTest(unittest.TestCase):
                 patch.dict(workflow.AGENT_RUNNERS, runners):
             database = str(Path(tmp) / "checkpoints.sqlite")
             with SqliteSaver.from_conn_string(database) as checkpointer:
+                save_writes = checkpointer.put_writes
+
+                def save_and_signal(config, writes, task_id, task_path=""):
+                    save_writes(config, writes, task_id, task_path)
+                    for channel, value in writes:
+                        if channel == "node_status":
+                            for name, completed in completed_peers.items():
+                                if value.get(name) == "done":
+                                    completed.set()
+
                 graph = workflow.build_graph(checkpointer=checkpointer)
-                with self.assertRaisesRegex(KeyboardInterrupt, "simulated checkpoint interruption"):
+                with patch.object(checkpointer, "put_writes", side_effect=save_and_signal), \
+                        self.assertRaisesRegex(KeyboardInterrupt, "simulated checkpoint interruption"):
                     graph.invoke({"research_question": "q", "run_id": run_id}, config=config)
 
                 snapshot = graph.get_state(config)
@@ -367,6 +384,9 @@ class CheckpointResumeTest(unittest.TestCase):
                 self.assertNotIn("final_report", snapshot.values)
                 self.assertEqual(calls.count("tech_research"), 1)
                 self.assertEqual(calls.count("report_writer"), 0)
+                for name, completed in completed_peers.items():
+                    self.assertTrue(completed.is_set(), name)
+                    self.assertEqual(calls.count(name), 1, name)
 
             # 새 연결·새 그래프로 복구하여 메모리만으로 이어가는 경우를 배제한다.
             with SqliteSaver.from_conn_string(database) as checkpointer:
@@ -379,6 +399,11 @@ class CheckpointResumeTest(unittest.TestCase):
 
         self.assertEqual(domain_attempts, 2)
         self.assertEqual(calls.count("tech_research"), 1)  # 초기 단계부터 재시작하지 않음
+        self.assertEqual(calls.count("trl_evaluation"), 1)
+        self.assertEqual(calls.count("stakeholder_evaluation"), 1)
+        # market의 두 번째 호출은 재개 중복이 아니라 충분도 미달에 따른 정책 재작업이다.
+        self.assertEqual(calls.count("market_evaluation"), 2)
+        self.assertEqual(result["rework_counts"], {"market_evaluation": 1})
         self.assertEqual(result["run_id"], run_id)
         self.assertEqual(result["node_status"]["domain_evaluation"], "done")
         self.assertEqual(result["final_report"], "report v1")
