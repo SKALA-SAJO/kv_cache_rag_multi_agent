@@ -146,3 +146,30 @@ class FaithfulnessCheckResult(BaseModel):
     insufficient_evidence_claims: list[str] = Field(
         description="근거 부족으로 판정된 claim 목록"
     )
+
+
+QualityCriterion = Literal["groundedness", "neutrality", "bias_control", "perspective_coverage"]
+PerspectiveNode = Literal[
+    "trl_evaluation", "market_evaluation", "stakeholder_evaluation", "domain_evaluation"
+]
+
+
+class CriterionJudgement(BaseModel):
+    """LLM Judge의 평가 항목 1개 판정 (agents/quality_evaluation.py)."""
+
+    criterion: QualityCriterion
+    passed: bool = Field(description="이 항목의 기준을 충족하면 true")
+    score: int = Field(ge=1, le=5, description="1(심각한 미달)~5(완전 충족)")
+    issues: list[str] = Field(description="미달 근거가 된 구체적 문장·절 (통과면 빈 리스트)")
+    rework_targets: list[PerspectiveNode] = Field(
+        default_factory=list,
+        description="문제의 원인이 보고서 서술이 아니라 해당 관점 Agent의 근거 수집 부족일 때만 "
+        "그 관점 Agent를 지정한다. 서술만 고치면 되는 문제면 빈 리스트",
+    )
+
+
+class QualityJudgement(BaseModel):
+    """LLM Judge 출력. 규칙 기반 판정과 결합되어 quality_verdict가 된다."""
+
+    criteria: list[CriterionJudgement] = Field(description="4개 항목 각각에 대해 정확히 1개씩")
+    feedback: str = Field(description="보고서 재작성 시 반영할 구체적 수정 지시 (통과면 빈 문자열)")

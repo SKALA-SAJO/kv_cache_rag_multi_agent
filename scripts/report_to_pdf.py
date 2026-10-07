@@ -1,6 +1,6 @@
-"""outputs/report_*.md 최종 평가 보고서를 제출용 PDF(RAG-Output)로 변환한다.
+"""outputs/report_*.md 최종 평가 보고서를 제출용 PDF(Agent-Output)로 변환한다.
 
-파일명 규칙: RAG-Output_{캠퍼스}_{X반}_{이름들}.pdf (기본값 = RAG-Design PDF와 동일한 팀 정보).
+파일명 규칙: Agent-Output_{캠퍼스}_{X반}_{이름들}.pdf (기본값 = RAG-Design PDF와 동일한 팀 정보).
 pandoc 등 시스템 설치 없이 uv sync만으로 재현되도록 순수 Python(markdown + xhtml2pdf)을
 쓰고, 한글 미지원인 기본 PDF 폰트 대신 assets/fonts/의 나눔고딕을 임베딩한다.
 
@@ -57,7 +57,7 @@ ul, ol {{ margin: 4px 0; padding-left: 20px; }}
 
 
 def _latest_report() -> Path:
-    reports = sorted(OUTPUTS_DIR.glob("report_*.md"))
+    reports = sorted(OUTPUTS_DIR.glob("report_*.md"), key=lambda p: p.stat().st_mtime)
     if not reports:
         raise SystemExit(
             f"{OUTPUTS_DIR} 에 report_*.md 파일이 없습니다. 먼저 `uv run python app.py`를 실행하세요."
@@ -110,7 +110,7 @@ def main() -> None:
     input_path = args.input or _latest_report()
     output_path = (
         args.output
-        or OUTPUTS_DIR / f"RAG-Output_{args.campus}_{args.class_name}_{args.names}.pdf"
+        or OUTPUTS_DIR / f"Agent-Output_{args.campus}_{args.class_name}_{args.names}.pdf"
     )
     convert(input_path, output_path)
 
