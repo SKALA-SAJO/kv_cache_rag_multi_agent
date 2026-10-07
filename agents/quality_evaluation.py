@@ -40,11 +40,19 @@ PERSPECTIVE_HEADINGS = {
     "domain_evaluation": ("장문맥 처리 애플리케이션", "도메인"),
 }
 
-# 우열 판정·추천 표현. 같은 문장에 부정어가 있으면("승자로 선정하지 않는다") 위반으로 보지 않는다.
-BIASED_PATTERNS = re.compile(
-    r"우월|우세하다|더 우수|더 낫|압도적|최종 승자|승자로|채택을 권고|추천한다|추천합니다|가장 좋은|superior|outperforms"
+# 우열 판정·추천 표현.
+# - "조건 A에서는 X가 더 낫다" 같은 조건부 비교는 허용
+# - "승자를 가릴 수 없다/어렵다" 같은 우열 판정 *부정* 문장은 위반으로 보지 않는다.
+WINNER_RECOMMENDATION_PATTERNS = re.compile(
+    r"최종 승자|승자로|채택을 권고|도입을 권고|추천한다|추천합니다|가장 좋은"
 )
-NEGATIONS = ("않", "아니", "없", "지양", "배제")
+STRONG_SUPERIORITY_PATTERNS = re.compile(r"우월|압도적|superior|outperforms")
+COMPARATIVE_PATTERNS = re.compile(
+    r"우세하다|더 우수|더 낫|더 유리|더 적합"
+)
+NEGATION_PATTERN = re.compile(r"하지\s*않|않는다|아니다|없다|수\s*없|어렵|불가|불가능|지양|배제")
+WINNER_NEGATION_PATTERN = re.compile(r"하지\s*않|않는다|아니다")
+CONDITIONAL_CUES = re.compile(r"조건|경우|환경|상황|에서는|에선|일\s*때|할\s*때|이라면|라면|가능\s*시|필요\s*시")
 
 _CITATION_GROUP = re.compile(r"\[(R\d+(?:\s*[,;]\s*R\d+)*)\]")
 
@@ -105,8 +113,24 @@ def rule_groundedness(report: str, catalog: list[dict]) -> dict[str, Any]:
 def rule_neutrality(report: str) -> dict[str, Any]:
     issues = []
     for sentence in re.split(r"(?<=[.!?。])\s+|\n", _body_without_reference(report)):
-        if BIASED_PATTERNS.search(sentence) and not any(n in sentence for n in NEGATIONS):
-            issues.append(f"우열/추천 표현: \"{sentence.strip()[:120]}\"")
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+
+        if STRONG_SUPERIORITY_PATTERNS.search(sentence) and not NEGATION_PATTERN.search(sentence):
+            issues.append(f"우열/추천 표현: \"{sentence[:120]}\"")
+            continue
+
+        if WINNER_RECOMMENDATION_PATTERNS.search(sentence) and not WINNER_NEGATION_PATTERN.search(sentence):
+            issues.append(f"우열/추천 표현: \"{sentence[:120]}\"")
+            continue
+
+        if COMPARATIVE_PATTERNS.search(sentence):
+            if NEGATION_PATTERN.search(sentence):
+                continue
+            if CONDITIONAL_CUES.search(sentence):
+                continue
+            issues.append(f"우열/추천 표현: \"{sentence[:120]}\"")
     return {"passed": not issues, "issues": issues}
 
 

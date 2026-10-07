@@ -65,6 +65,39 @@ class QualityRuleTest(unittest.TestCase):
         evidence = [{"document_id": "only.pdf"}] * 9 + [{"document_id": "other.pdf"}]
         self.assertFalse(qe.rule_bias_control(GOOD_REPORT, self.catalog, evidence)["passed"])
 
+    def test_neutrality_ignores_negated_winner_language_and_allows_conditional_comparison(self) -> None:
+        negated = GOOD_REPORT.replace(
+            "특정 기술을 승자로 선정하지 않는다",
+            "최종 승자는 아니다",
+        )
+        self.assertTrue(qe.rule_neutrality(negated)["passed"])
+
+        conditional = GOOD_REPORT.replace(
+            "MLA는 KV Cache를 줄인다 [R1]. InfiniGen은 프리페치한다 [R2].",
+            "장문맥 환경에서는 MLA가 InfiniGen보다 더 유리하다 [R1]. InfiniGen은 프리페치한다 [R2].",
+        )
+        self.assertTrue(qe.rule_neutrality(conditional)["passed"])
+
+        unconditional = GOOD_REPORT.replace(
+            "MLA는 KV Cache를 줄인다 [R1]. InfiniGen은 프리페치한다 [R2].",
+            "MLA가 InfiniGen보다 더 유리하다 [R1]. InfiniGen은 프리페치한다 [R2].",
+        )
+        self.assertFalse(qe.rule_neutrality(unconditional)["passed"])
+
+        # 강한 우열 표현은 조건부 예외 없이 항상 위반(부정문만 예외)
+        strong = GOOD_REPORT.replace(
+            "MLA는 KV Cache를 줄인다 [R1]. InfiniGen은 프리페치한다 [R2].",
+            "실제 서비스 환경에서 MLA가 InfiniGen보다 압도적으로 우월하다 [R1]. InfiniGen은 프리페치한다 [R2].",
+        )
+        self.assertFalse(qe.rule_neutrality(strong)["passed"])
+
+        # "추천" 패턴은 '어렵다/불가/없다' 같은 단어를 부정으로 보지 않는다
+        recommend = GOOD_REPORT.replace(
+            "LongBench 기준 평가가 필요하다 [R3].",
+            "도입이 어렵지만 MLA를 추천한다 [R1].",
+        )
+        self.assertFalse(qe.rule_neutrality(recommend)["passed"])
+
     def test_hybrid_requires_both_rule_and_judge(self) -> None:
         rules = {name: {"passed": True, "issues": []} for name in qe.CRITERIA + ["format"]}
         judgement = QualityJudgement(
