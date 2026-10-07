@@ -152,9 +152,10 @@ Supervisor 자체는 LLM이 아닌 **결정론적 정책**이다. LLM 판정이 
 - 동시 처리 : Supervisor가 관점 Agent를 한 superstep에 병렬 디스패치하므로 동시에 쓰는 필드에 리듀서
   적용 — `node_status`/`errors`는 key 단위 dict 병합(`merge_dict`), `evidence_items`/`references`는
   중복 제거 리스트 병합. 관점 결과는 Agent마다 키가 달라 충돌 없음. `attempts`/`rework_counts`는
-  Supervisor만 쓰는 단일 writer 필드. `max_concurrency`는 설정하지 않았다. 강의자료 PDF 132쪽은 Rate limit 대비로
-  동시 태스크 수 제한을 권하지만, 병렬 노드가 관점 4개로 고정이라 제한값이 동작을 바꾸지 않고 노드 내부의 기술별
-  `ThreadPoolExecutor`는 이 설정의 대상이 아니다. 2026-10-07 실행 4회에서 OpenAI/Tavily rate limit 오류는 로그에 없었다.
+  Supervisor만 쓰는 단일 writer 필드. LangGraph `max_concurrency=4`는 한 superstep의 병렬 관점 노드
+  최대 4개에 맞춰 노드 실행 수를 제한한다. 각 노드 내부의 기술별 `ThreadPoolExecutor`(2개 스레드)는
+  이 설정의 대상이 아니므로 API 전체 동시 요청 수를 4로 보장하지 않는다. 강의자료 PDF 132쪽
+  「Fan-out 설계 고려사항 — Concurrency 제어」의 동시 태스크 수·비용 제어 원칙을 적용했다.
 - 종료 보장 : ① Supervisor 스텝 상한 `MAX_SUPERVISOR_STEPS=30`(초과 시 보고서만 생성 후 END),
   ② 실패 재시도 `MAX_FAILURE_RETRIES=1`, ③ Agent별 재작업 `MAX_REWORK_PER_AGENT=2`, ④ 검증 재작업 라운드
   `MAX_FAITHFULNESS_ROUNDS=2`(검증 루프가 스텝 예산을 소진해 품질 평가 루프에 못 가는 일 방지), ⑤ 보고서
