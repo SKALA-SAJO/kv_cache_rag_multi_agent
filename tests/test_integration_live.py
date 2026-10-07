@@ -50,6 +50,10 @@ class LiveIntegrationTest(unittest.TestCase):
         self.assertIn("quality_verdict", result, "보고서 생성 후 품질 평가가 수행되어야 합니다.")
         self.assertIsInstance(result["quality_verdict"], dict)
         self.assertIsInstance(result["quality_verdict"].get("passed"), bool)
+        self.assertEqual(
+            result.get("node_status", {}).get("quality_evaluation"), "done",
+            "최종 보고서 품질 평가가 완료되어야 합니다. 이전 verdict만 남은 실패 종료는 허용하지 않습니다.",
+        )
         # 품질 미달 예산 종료도 허용하되, 미완료 라우팅이 남아 있으면 안 된다.
         self.assertEqual(result["next_nodes"], [], "Supervisor가 종료 경로에 도달해야 합니다.")
         self.assertTrue(after - before, "outputs/에 Markdown 보고서가 생성되어야 합니다.")
