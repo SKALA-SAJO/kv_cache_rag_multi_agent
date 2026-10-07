@@ -50,12 +50,13 @@ class Settings(BaseSettings):
     max_faithfulness_rounds: int = 2
     # 품질 평가 미달 시 보고서 재작성 상한.
     max_report_revisions: int = 2
-    # 관점별 근거 충분도 게이트의 공통 기준 (Supervisor가 결정론적으로 판정).
-    # 2026-10-07 실제 트레이스에서 Tavily 전용 이해관계자 관점도 근거 15건·출처 15종으로
-    # 통과했다. 검색 방식만으로 기준을 낮출 근거가 없어 네 관점에 동일하게 적용한다.
+    # 근거 충분도 게이트의 공통 기준 — "관점 × 기술" 단위로 판정한다.
+    # Tavily 전용 이해관계자 관점도 실제 기술별 트레이스에서 MLA 5건·5종,
+    # InfiniGen 10건·8종으로 통과해 검색 방식만으로 기준을 낮추지 않는다.
     min_evidence_items: int = 3
     min_distinct_sources: int = 2
     # LangGraph 자체 recursion_limit (Supervisor 스텝 상한과 별개의 2차 가드).
+    # 최악 = init 1 + Supervisor 33회(상한 30 + 보고서·품질 2 + 종료 1) + 하위 노드 32회 = 66 < 80.
     graph_recursion_limit: int = 80
 
     # ── 보고서 품질 평가 (agents/quality_evaluation.py) ──

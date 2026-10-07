@@ -4,9 +4,8 @@
 비대칭(1~3 학술자료, 4~6 영업비밀, 7~9 수율·원가/운영정보)을 평가 한계에 남긴다.
 """
 
-from concurrent.futures import ThreadPoolExecutor
-
 from langchain_core.documents import Document
+from langchain_core.runnables.config import ContextThreadPoolExecutor
 
 from agents.base import (
     documents_to_evidence_items,
@@ -86,6 +85,7 @@ def _process_technology(
             if result.score is not None
             else f"{tech_name} TRL 정보 부족 판단 근거"
         ),
+        technology=tech_name,
     )
     for item in evidence_items:
         item["limitation"] = information_gap
@@ -103,7 +103,7 @@ def run(state: GraphState) -> dict:
 
     # 기술 간 참조가 없는 독립 작업이므로 병렬 실행한다. 제출 순서대로 결과를 모아
     # (완료 순서가 아님) 순차 실행과 동일한 병합 순서를 보장한다.
-    with ThreadPoolExecutor(max_workers=len(technologies) or 1) as executor:
+    with ContextThreadPoolExecutor(max_workers=len(technologies) or 1) as executor:
         futures = [
             executor.submit(
                 _process_technology, tech_name, tech_info, technical_evidence, retry_hint

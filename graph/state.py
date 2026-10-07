@@ -65,6 +65,7 @@ def dedupe_evidence_items(existing: list[dict], new: list[dict]) -> list[dict]:
     for item in combined:
         key = (
             item.get("agent"),
+            item.get("technology"),  # 같은 청크라도 기술별 근거로는 따로 센다 (충분도 게이트)
             item.get("document_id") or item.get("source_url"),
             item.get("page_or_section"),
             (item.get("evidence_quote") or "")[:80],
@@ -110,7 +111,7 @@ class GraphState(TypedDict, total=False):
     errors: Annotated[dict[str, str], merge_dict]  # {node: 최근 에러 메시지}
     rework_counts: dict[str, int]  # 근거 부족에 따른 재작업 요청 횟수 (Supervisor만 씀)
     retry_hints: dict[str, str]  # Supervisor → 하위 Agent 재작업 지시 (Agent 간 직접 통신 금지)
-    sufficiency: dict[str, dict[str, Any]]  # 관점별 근거 충분도 판정 {agent: {sufficient, reason}}
+    sufficiency: dict[str, dict[str, Any]]  # 관점별 근거 충분도 판정 {agent: {sufficient, per_technology, reason}}
     faithfulness_rounds: int  # 검증 실패로 재작업을 요청한 라운드 수 (종료 가드)
     report_revisions: int  # 품질 평가 미달로 보고서를 다시 쓴 횟수
     quality_feedback: str  # Supervisor → report_writer 재작성 지시
