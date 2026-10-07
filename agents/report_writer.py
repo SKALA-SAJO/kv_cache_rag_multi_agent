@@ -100,6 +100,8 @@ GRAPH_DESIGN_NOTE = (
 
 
 _NON_REF_CITATION = re.compile(r"\s*\[(?!R\d)[A-Za-z_]+\]")
+# REFERENCE 항목 앞머리의 ID 표기 변형: "- R1 ...", "- (R1) ...", "- R1. ...", "- R1: ..." → "- [R1] ..."
+_REF_ID_PREFIX = re.compile(r"^(\s*[-*]\s*)\(?(R\d+)\)?[.:)]?\s+", flags=re.MULTILINE)
 _REF_ANNOTATION = re.compile(r"\s*\[(?:원문|external_search|implementation_document|market_document|technical_paper|domain_benchmark)[^\]]*\]")
 
 
@@ -109,6 +111,7 @@ def clean_report(markdown: str) -> str:
     - 본문의 `[R#]`가 아닌 가짜 인용 태그 (예: `[orchestration]`)
     - REFERENCE 항목 뒤의 파일명·doc_type 주석 (예: `[원문: infinigen.pdf]`)
     - REFERENCE 절의 `(참고) ...` 같은 메타 설명 문단
+    - REFERENCE 항목 ID 표기 변형(`- R1 ...`)을 `- [R1] ...`로 정규화 (인용 검증 오탐 방지)
     """
     head, sep, tail = markdown.partition("## REFERENCE")
     head = _NON_REF_CITATION.sub("", head)
@@ -118,8 +121,32 @@ def clean_report(markdown: str) -> str:
             for line in tail.splitlines()
             if not line.strip().startswith(("(참고", "（참고", "※"))
         ]
-        tail = "\n".join(lines).rstrip() + "\n"
+        tail = _REF_ID_PREFIX.sub(r"\1[\2] ", "\n".join(lines)).rstrip() + "\n"
     return head + sep + tail
+
+
+def complete_references(markdown: str, catalog: list[dict]) -> str:
+    """본문에서 인용했지만 REFERENCE에 빠진 ID를 카탈로그로 채운다 (LLM 누락을 결정론적으로 보완).
+
+    추가 항목은 카탈로그에 실제로 있는 출처(source/url)만 쓰므로 근거를 지어내지 않는다.
+    """
+    from agents.quality_evaluation import extract_citations
+
+    head, sep, tail = markdown.partition("## REFERENCE")
+    if not sep:
+        return markdown
+    by_id = {c["ref_id"]: c for c in catalog}
+    listed = set(extract_citations(tail))
+    missing = [i for i in dict.fromkeys(extract_citations(head)) if i in by_id and i not in listed]
+    if not missing:
+        return markdown
+    lines = []
+    for ref_id in sorted(missing, key=lambda x: int(x[1:])):
+        c = by_id[ref_id]
+        title = c.get("source") or c.get("url") or "출처"
+        url = f", {c['url']}" if c.get("url") and c.get("url") != title else ""
+        lines.append(f"- [{ref_id}] {title}{url}")
+    return head + sep + tail.rstrip() + "\n\n기타 (본문 인용 보완)\n" + "\n".join(lines) + "\n"
 
 
 def run(state: GraphState) -> dict:
@@ -239,7 +266,7 @@ def run(state: GraphState) -> dict:
     response = llm.invoke(
         [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_content)]
     )
-    report_markdown = clean_report(response.content)
+    report_markdown = complete_references(clean_report(response.content), catalog)
 
     settings.outputs_path.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

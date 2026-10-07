@@ -174,13 +174,21 @@ def rule_format(report: str) -> dict[str, Any]:
 def _judge_input(state: GraphState, report: str, catalog: list[dict]) -> str:
     evidence = state.get("evidence_items", [])
     per_agent = Counter(e.get("agent") for e in evidence)
+    # 보고서가 실제로 인용한 출처의 근거를 우선 보여준다 — 앞에서부터 자르면 인용된 수치의
+    # 원문이 샘플에서 빠져 Judge가 근거 있는 주장을 미달로 오판한다.
+    cited_ids = set(extract_citations(_body_without_reference(report)))
+    cited_sources = {c.get("url") or c.get("source") for c in catalog if c["ref_id"] in cited_ids}
+    ranked = sorted(
+        evidence,
+        key=lambda e: (e.get("source_url") or e.get("document_id")) not in cited_sources,
+    )
     samples = [
         {
             "agent": e.get("agent"),
             "source": e.get("document_id") or e.get("source_url"),
-            "quote": (e.get("evidence_quote") or "")[:200],
+            "quote": (e.get("evidence_quote") or "")[:300],
         }
-        for e in evidence[:60]
+        for e in ranked[:80]
     ]
     payload = {
         "reference_catalog": [
