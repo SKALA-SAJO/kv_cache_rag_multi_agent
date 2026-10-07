@@ -13,6 +13,7 @@ append한다. 각 레코드는 {ts, run_id, step, node, event, ...}이며 run_id
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from collections import Counter, defaultdict
@@ -35,10 +36,15 @@ def trace_path(run_id: str) -> Path:
     return settings.outputs_path / "traces" / f"{run_id}.jsonl"
 
 
+def now_ts() -> str:
+    """결정 로그·State 타임스탬프 공통 형식 (로컬 시각, 초 단위 ISO 8601)."""
+    return datetime.now().isoformat(timespec="seconds")
+
+
 def log_event(run_id: str, node: str, event: str, **fields: Any) -> None:
     """외부 결정/실행 로그 1건을 기록한다 (병렬 노드에서 호출되므로 락으로 직렬화)."""
     record = {
-        "ts": datetime.now().isoformat(timespec="seconds"),
+        "ts": now_ts(),
         "run_id": run_id,
         "node": node,
         "event": event,
@@ -164,7 +170,7 @@ def record_run_feedback(run_id: str, quality_passed: bool | None) -> None:
 # ── 보고서 부록 ──────────────────────────────────────────────────────────────
 
 
-def _cell(text: str, limit: int = 160) -> str:
+def _cell(text: str, limit: int = 90) -> str:
     text = " ".join(str(text).split()).replace("|", "\\|")
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
@@ -189,3 +195,17 @@ def render_decision_appendix(run_id: str) -> str:
         targets = ", ".join(d.get("targets") or []) or "END"
         lines.append(f"| {d.get('step')} | {d.get('action')} | {targets} | {_cell(d.get('reason', ''))} |")
     return "\n".join(lines) + "\n"
+
+
+def insert_appendix(report: str, appendix: str) -> str:
+    """부록을 REFERENCE 절 바로 앞에 넣는다 (가이드 목차: 마지막 챕터는 REFERENCE).
+
+    REFERENCE 헤딩이 없으면 끝에 붙인다. 부록이 비면 보고서를 그대로 돌려준다.
+    """
+    if not appendix:
+        return report
+    match = re.search(r"^#{1,2}\s*REFERENCE\b", report, flags=re.MULTILINE)
+    if match is None:
+        return report.rstrip() + "\n\n" + appendix
+    head, tail = report[: match.start()], report[match.start():]
+    return head.rstrip() + "\n\n" + appendix.rstrip() + "\n\n" + tail

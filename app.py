@@ -28,6 +28,7 @@ from pypdf import PdfReader  # noqa: E402
 from config import settings  # noqa: E402
 from graph.observability import (  # noqa: E402
     count_reworks,
+    insert_appendix,
     print_timing_summary,
     record_run_feedback,
     render_decision_appendix,
@@ -117,12 +118,13 @@ def main() -> None:
     _print_orchestration_summary(result)
     print(f"\n[timing] 전체 실행 시간: {total_elapsed:.1f}초")
 
-    # 최종본 = 품질 평가를 거친 보고서 + Supervisor 결정 이력 부록. 부록은 실행 메타데이터라 품질 평가
-    # 대상이 아니고, 결정(품질 평가·종료 포함)이 모두 끝난 뒤에야 완성되므로 여기서 붙인다.
+    # 최종본 = 품질 평가를 거친 보고서 + Supervisor 결정 이력 부록(마지막 챕터 REFERENCE 바로 앞).
+    # 부록은 실행 메타데이터라 품질 평가 대상이 아니고, 결정(품질 평가·종료 포함)이 모두 끝난 뒤에야
+    # 완성되므로 여기서 붙인다.
     report_path = Path(result["report_path"])
     final_path = report_path.with_name(f"{report_path.stem}_final.md")
     final_path.write_text(
-        result["final_report"].rstrip() + "\n\n" + render_decision_appendix(result["run_id"]), encoding="utf-8"
+        insert_appendix(result["final_report"], render_decision_appendix(result["run_id"])), encoding="utf-8"
     )
     print(f"[app] 최종 보고서(결정 이력 부록 포함): {final_path}")
     if not args.resume:  # 재개 실행은 루트 run id가 run_id와 달라 기록 대상이 없다

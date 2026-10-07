@@ -30,7 +30,7 @@ from typing import Any
 from langgraph.graph import END
 
 from config import settings
-from graph.observability import log_event, trace_decision
+from graph.observability import log_event, now_ts, trace_decision
 from graph.state import GraphState
 
 END_ACTION = "end"
@@ -67,6 +67,7 @@ def initial_control_state(run_id: str) -> dict[str, Any]:
         "node_status": {name: "pending" for name in WORKER_NODES},
         "attempts": {},
         "errors": {},
+        "error_times": {},
         "rework_counts": {},
         "retry_hints": {},
         "sufficiency": {},
@@ -380,7 +381,7 @@ def _policy(d: _Decision, state: GraphState, step: int) -> tuple[list[str], str,
 def supervisor_node(state: GraphState) -> dict[str, Any]:
     targets, action, reason, updates = decide(state)
     step = updates["step_count"]
-    decision = {"step": step, "action": action, "targets": targets, "reason": reason}
+    decision = {"step": step, "action": action, "targets": targets, "reason": reason, "ts": now_ts()}
     print(f"[supervisor] step {step:>2} | {action:<22} -> {targets or 'END'} | {reason}", flush=True)
     log_event(
         state.get("run_id", ""),
