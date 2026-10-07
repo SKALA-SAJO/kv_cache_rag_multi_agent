@@ -26,6 +26,12 @@ uv run python -m unittest discover -s tests -p "test_*.py" -v
 생략되고 `1`이면 실행되는지 unittest 실행 결과로 확인한다. 테스트 본문은 대역으로 교체하므로
 활성화 조건 검증에서도 실제 API를 호출하지 않으며, 환경 변수와 기존 discovery 모듈은 유지한다.
 
+`test_environment_contract.py`는 `.env.example`의 설정 이름·기본값이 `config.py`와 맞는지,
+원문·청크·색인·출력 기본 경로가 다운로드 및 보고서 스크립트와 일치하는지 확인한다.
+`test_app_cli.py`는 대역 Agent로 실제 `app.main()`과 SQLite 그래프를 실행한다. 정상 종료 시
+`[app] 체크포인트 정리:` 로그가 정확히 한 줄 나오고 마지막 체크포인트만 남는지 확인하며,
+`--keep-checkpoints`에서는 정리 로그 없이 이력이 유지되는지 확인한다. API·PDF 생성은 대역으로 격리한다.
+
 ## 실제 API 통합 테스트 (비용 발생 가능)
 
 `.env`에 `OPENAI_API_KEY`, `TAVILY_API_KEY`가 설정되어 있고 RAG 색인이 만들어진 경우에만
