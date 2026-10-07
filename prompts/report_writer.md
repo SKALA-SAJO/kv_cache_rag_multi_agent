@@ -101,6 +101,10 @@ REFERENCE
   score**를 쓰고, 시장성·이해관계자·도메인 적합성은 **level**("근거 부족"/"근거 제한적"/
   "근거 충분") 3단계 라벨을 쓴다 — 이 둘을 같은 척도인 것처럼 섞어 쓰지 않는다.
   insufficient_evidence=true인 항목은 score/level 대신 "정보 부족"으로 표기한다.
+- TRL 숫자·관점별 level은 문헌에 적힌 사실이 아니라 **평가 Agent의 판정**이다. "MLA는 TRL 8이다"처럼
+  사실로 단정하지 말고, 판정 주체와 판정 근거를 함께 쓴다
+  (예: "기술 성숙도 Agent는 상용 서비스 배포 사례 [R2]를 근거로 MLA를 TRL 8로 판정했다").
+  해당 Agent의 limitations가 비어 있지 않으면 "근거 제한적"임을 같은 문장이나 다음 문장에 밝힌다.
 - 3.1(Agent별 역할)에서는 payload의 `agent_definitions`에 있는 이름만 사용한다 (Supervisor 포함).
   - "Retrieval Agent", "Connector Agent" 같은 코드를 기반으로 하지 않은 Agent 명칭을 새로
     만들지 않는다.

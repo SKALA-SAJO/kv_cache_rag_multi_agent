@@ -4,11 +4,11 @@ import json
 import re
 from datetime import datetime
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agents.base import build_reference_catalog, get_llm, load_prompt
 from config import settings
-from graph.observability import summarize_decisions
+from graph.observability import log_event, summarize_decisions
 from graph.state import GraphState
 from scripts.download_papers import CORPUS_SOURCES
 
@@ -149,6 +149,51 @@ def complete_references(markdown: str, catalog: list[dict]) -> str:
     return head + sep + tail.rstrip() + "\n\n기타 (본문 인용 보완)\n" + "\n".join(lines) + "\n"
 
 
+CITATION_REPAIR_PROMPT = (
+    "위 보고서는 인용 규칙 자체 점검에서 미달이다:\n{issues}\n\n"
+    "내용·구성·표현은 그대로 두고, 근거 주장 문장에 reference_catalog의 [R#] 인용만 보강한 "
+    "전체 보고서를 처음부터 끝까지 다시 출력하라. 카탈로그에 없는 ID는 쓰지 않는다."
+)
+
+
+def citation_issues(report: str, catalog: list[dict]) -> list[str]:
+    """품질 평가와 같은 규칙으로 보고서의 인용 형식만 점검한다 (근거 수집 상태와 무관한 항목만).
+
+    보고서 작성 단계에서 고칠 수 있는 것 — 관점 절 인용 누락, 본문 인용 수, 카탈로그 밖 ID,
+    외부 검색 출처 미인용 — 만 본다. 근거 편중(evidence_items 비율)은 작성 단계에서 못 고치므로 제외.
+    """
+    from agents.quality_evaluation import rule_bias_control, rule_groundedness
+
+    issues = rule_groundedness(report, catalog)["issues"]
+    issues += rule_bias_control(report, catalog, [])["issues"]
+    return issues
+
+
+def generate_report(llm, user_content: str, catalog: list[dict], run_id: str = "") -> str:
+    """보고서를 생성하고, 인용 자체 점검에 미달하면 1회만 보정 요청한다 (생성 → 점검 → 보정).
+
+    재작성 시 LLM이 품질 피드백에 집중하다 [R#] 인용을 대량으로 빠뜨리는 사례(24개 → 4개)가 있었다.
+    그대로 품질 평가로 넘기면 재작업·재작성 루프(1회 3~5분)를 소모하므로, 결정론적 규칙으로 먼저 잡는다.
+    보정본이 더 나을 때만 채택하고, 카탈로그가 비면(인용할 출처 없음) 보정하지 않는다.
+    """
+    messages = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_content)]
+    draft = llm.invoke(messages).content
+    report = complete_references(clean_report(draft), catalog)
+    issues = citation_issues(report, catalog)
+    if not issues or not catalog:
+        return report
+
+    print(f"[report_writer] 인용 자체 점검 미달 {len(issues)}건 → 1회 보정 요청", flush=True)
+    messages += [AIMessage(content=draft), HumanMessage(content=CITATION_REPAIR_PROMPT.format(
+        issues="\n".join(f"- {i}" for i in issues)))]
+    repaired = complete_references(clean_report(llm.invoke(messages).content), catalog)
+    remaining = citation_issues(repaired, catalog)
+    adopted = len(remaining) < len(issues)
+    log_event(run_id, "report_writer", "citation_repair", issues=issues, remaining=remaining, adopted=adopted)
+    print(f"[report_writer] 보정 {'채택' if adopted else '미채택'} (미달 {len(issues)}건 → {len(remaining)}건)", flush=True)
+    return repaired if adopted else report
+
+
 def run(state: GraphState) -> dict:
     catalog = build_reference_catalog(state.get("references", []))
     decisions = summarize_decisions(state.get("run_id", ""))
@@ -262,11 +307,7 @@ def run(state: GraphState) -> dict:
     }
     user_content = json.dumps(payload, ensure_ascii=False, indent=2)
 
-    llm = get_llm("generator")
-    response = llm.invoke(
-        [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_content)]
-    )
-    report_markdown = complete_references(clean_report(response.content), catalog)
+    report_markdown = generate_report(get_llm("generator"), user_content, catalog, state.get("run_id", ""))
 
     settings.outputs_path.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
