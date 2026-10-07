@@ -25,14 +25,14 @@ class LiveResultContractTest(unittest.TestCase):
             )
             result = {
                 "evidence_items": [{"source_type": "external_search", "source_url": "https://example.test"}],
-                "final_report": "SUMMARY\nreport\nREFERENCE",
+                "report_path": str(directory / "report_fake.md"),
                 "quality_verdict": {"passed": passed},
                 "node_status": {"quality_evaluation": quality_status},
                 "next_nodes": [],
             }
 
             def invoke(*args, **kwargs):
-                (directory / "report_fake.md").write_text(result["final_report"], encoding="utf-8")
+                (directory / "report_fake.md").write_text("SUMMARY\nreport\nREFERENCE", encoding="utf-8")
                 return result
 
             graph = Mock()

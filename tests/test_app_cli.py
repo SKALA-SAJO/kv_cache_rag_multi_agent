@@ -28,16 +28,16 @@ class AppCliTest(unittest.TestCase):
                 writer = runners["report_writer"]
 
                 def write_report(state):
-                    result = writer(state)
+                    result = writer(state)  # 대역도 본문은 파일로 쓰고 report_path(URI)만 돌려준다
                     # 보고서 본문은 가이드에 맞는 목차를 제공한다. app 후처리에서 순서가
                     # 달라지는지를 검사해야 하므로 대역 자체의 형식 오류를 배제한다.
-                    result["final_report"] = (
-                        f"## SUMMARY\n{result['final_report']}\n\n"
+                    body = (
+                        f"## SUMMARY\n{Path(result['report_path']).read_text(encoding='utf-8')}\n\n"
                         "## 1. 분석 배경\n대역 분석 결과\n\n"
                         "## REFERENCE\n- [R1] 대역 출처\n"
                     )
                     path = directory / "report_fake.md"
-                    path.write_text(result["final_report"], encoding="utf-8")
+                    path.write_text(body, encoding="utf-8")
                     return {**result, "report_path": str(path)}
 
                 runners["report_writer"] = write_report

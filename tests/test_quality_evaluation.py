@@ -98,6 +98,13 @@ class QualityRuleTest(unittest.TestCase):
         )
         self.assertFalse(qe.rule_neutrality(recommend)["passed"])
 
+    def test_neutrality_flags_one_sided_comparisons_from_real_report(self) -> None:
+        for sentence in ("DeepSeek-V2 MLA는 TRL 8로 상용화 준비가 더 진전된 상태이며, InfiniGen은 TRL 7이다.",
+                         "경쟁 기술 대비 메모리 절감 및 처리량 우수, 개발자 친화적 오픈소스 생태계.",
+                         "MLA가 높은 처리량으로 긍정적 평가를 받는 반면, InfiniGen은 도입 위험이 지적된다."):
+            self.assertFalse(qe.rule_neutrality(sentence)["passed"], sentence)
+        self.assertTrue(qe.rule_neutrality("MLA는 메모리 효율이 우수하다.")["passed"])  # 비교 없는 서술은 허용
+
     def test_hybrid_requires_both_rule_and_judge(self) -> None:
         rules = {name: {"passed": True, "issues": []} for name in qe.CRITERIA + ["format"]}
         judgement = QualityJudgement(

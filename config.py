@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     max_failure_retries: int = 1
     # 근거 부족(충분도 게이트·Faithfulness·품질 평가)으로 같은 Agent에 재작업을 요청하는 상한.
     max_rework_per_agent: int = 2
+    # 전체 재작업 라운드 상한(충분도 게이트·검증·품질 재작업 합계). Agent별 상한(2)만 있으면 5개 Agent를
+    # 합쳐 재작업이 누적돼 스텝 상한(30)까지 가고(실측 33스텝·35분), 같은 지적이 반복돼도 계속 돈다.
+    # 비용 상한을 명시적으로 두어 재작업은 최대 4라운드로 끝낸다(보고서 재작성 예산은 별도).
+    max_total_reworks: int = 4
     # Faithfulness 검증 실패로 인한 재작업 "라운드" 상한. Agent별 예산과 별개로, 검증 루프가
     # 스텝 예산을 소진해 보고서·품질 평가 루프에 도달하지 못하는 일을 막는다.
     max_faithfulness_rounds: int = 2

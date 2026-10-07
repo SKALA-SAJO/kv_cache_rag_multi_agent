@@ -40,6 +40,9 @@ _HTML_TEMPLATE = """<html>
     src: url("{bold_font}");
 }}
 body {{ font-family: "NanumGothic"; font-size: 10pt; line-height: 1.55; }}
+.report-title {{ font-size: 19pt; font-weight: bold; text-align: center; margin-bottom: 4px; }}
+.report-subtitle {{ font-size: 10pt; text-align: center; color: #555; border-bottom: 2px solid #333;
+    padding-bottom: 6px; margin-bottom: 10px; }}
 h1 {{ font-size: 17pt; border-bottom: 2px solid #333; padding-bottom: 4px; }}
 h2 {{ font-size: 13.5pt; margin-top: 18px; border-bottom: 1px solid #999; padding-bottom: 2px; }}
 h3 {{ font-size: 11.5pt; margin-top: 12px; }}

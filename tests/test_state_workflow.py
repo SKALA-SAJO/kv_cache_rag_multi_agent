@@ -48,7 +48,7 @@ class StateSchemaTest(unittest.TestCase):
     def test_control_and_payload_keys_exist(self) -> None:
         keys = set(GraphState.__annotations__)
         payload = {"technical_evidence", "trl_evaluation", "market_evaluation", "stakeholder_evaluation",
-                   "domain_evaluation", "evidence_items", "references", "synthesis", "final_report", "quality_verdict"}
+                   "domain_evaluation", "evidence_items", "references", "synthesis", "report_path", "quality_verdict"}
         control = {"run_id", "step_count", "max_steps", "next_nodes", "last_decision", "node_status",
                    "attempts", "errors", "rework_counts", "retry_hints", "sufficiency", "report_revisions"}
         self.assertTrue(payload <= keys)
@@ -105,7 +105,7 @@ class SupervisorPolicyTest(unittest.TestCase):
     def test_quality_failure_routes_to_revision_and_terminates(self) -> None:
         status = {n: "done" for n in initial_control_state("t")["node_status"]}
         verdict = {"passed": False, "failed_criteria": ["neutrality"], "rework_targets": [], "feedback": "fix"}
-        common = dict(node_status=status, quality_verdict=verdict, final_report="r",
+        common = dict(node_status=status, quality_verdict=verdict, report_path="r",
                       rework_counts={n: 9 for n in PERSPECTIVE_NODES})
         targets, action, _, updates = decide(_state(**common))
         self.assertEqual((targets, action), (["report_writer"], "revise_report"))
@@ -186,6 +186,19 @@ class SupervisorPolicyTest(unittest.TestCase):
         _, _, plain, _ = decide(_state(node_status=pending, **sufficient))
         self.assertNotIn("재작업", plain)
 
+    def test_total_rework_budget_stops_reworks_across_agents(self) -> None:
+        # Agent별 예산은 남았어도 전체 재작업 라운드를 다 쓰면 재작업하지 않고 다음 단계로 간다
+        status = {**initial_control_state("t")["node_status"], **{n: "done" for n in PERSPECTIVE_NODES},
+                  "tech_research": "done"}
+        weak = {"evidence_items": [e for n in PERSPECTIVE_NODES for e in _evidence(n, 4, 1)],
+                **{n: {"A": {}, "B": {}} for n in PERSPECTIVE_NODES}}
+        targets, action, reason, updates = decide(_state(node_status=status, **weak))
+        self.assertEqual(action, "rework_insufficient")
+        self.assertEqual(updates["rework_rounds"], 1)
+        self.assertIn(f"1/{settings.max_total_reworks}라운드", reason)
+        targets, action, _, _ = decide(_state(node_status=status, rework_rounds=settings.max_total_reworks, **weak))
+        self.assertEqual((targets, action), (["synthesis"], "synthesize"))
+
     def test_decision_reasons_distinguish_first_run_from_rework(self) -> None:
         done = {n: "done" for n in initial_control_state("t")["node_status"]}
         sufficient = {"evidence_items": [e for n in PERSPECTIVE_NODES for e in _evidence(n, 4, 2)],
@@ -193,10 +206,10 @@ class SupervisorPolicyTest(unittest.TestCase):
         pending_report = {**done, "report_writer": "pending", "quality_evaluation": "pending"}
         _, _, first, _ = decide(_state(node_status=pending_report, **sufficient))
         self.assertIn("근거 충분성 확인 완료", first)
-        _, _, again, _ = decide(_state(node_status=pending_report, final_report="old",
+        _, _, again, _ = decide(_state(node_status=pending_report, report_path="old",
                                        rework_counts={"domain_evaluation": 1}, **sufficient))
         self.assertIn("재작업 결과 반영", again)
-        _, _, quality, _ = decide(_state(node_status=pending_report, final_report="old",
+        _, _, quality, _ = decide(_state(node_status=pending_report, report_path="old",
                                          quality_feedback="fix", **sufficient))
         self.assertIn("품질 미달 원인 관점 재작업 반영", quality)
 
@@ -216,11 +229,11 @@ class SupervisorPolicyTest(unittest.TestCase):
         self.assertEqual((targets, action), (["report_writer"], "force_report"))
         # 보고서는 있지만 미평가 → 품질 평가 1회 (상한이어도 필수 게이트는 건너뛰지 않음)
         status = {**done, "quality_evaluation": "pending"}
-        targets, action, _, _ = decide(_state(step_count=cap + 1, node_status=status, final_report="r"))
+        targets, action, _, _ = decide(_state(step_count=cap + 1, node_status=status, report_path="r"))
         self.assertEqual((targets, action), (["quality_evaluation"], "force_quality"))
         # 평가 끝 → 미달이어도 종료
         verdict = {"passed": False, "failed_criteria": ["neutrality"]}
-        targets, action, reason, _ = decide(_state(step_count=cap + 2, node_status=done, final_report="r",
+        targets, action, reason, _ = decide(_state(step_count=cap + 2, node_status=done, report_path="r",
                                                    quality_verdict=verdict))
         self.assertEqual((targets, action), ([], "end"))
         self.assertIn("미달", reason)
@@ -321,7 +334,11 @@ def _fake_runners(calls: list[str], fail_once: set[str]):
             if name == "faithfulness_check":
                 return {"faithfulness_check": {"passed": True, "agents_to_retry": []}}
             if name == "report_writer":
-                return {"final_report": f"report v{state.get('report_revisions', 0)}"}
+                # 실제 report_writer처럼 본문은 파일로 쓰고 State에는 경로(URI)만 돌려준다.
+                path = Path(settings.outputs_path) / f"report_{name}_{counts[name]}_rev{state.get('report_revisions', 0)}.md"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(f"report v{state.get('report_revisions', 0)}", encoding="utf-8")
+                return {"report_path": str(path)}
             if name == "quality_evaluation":
                 ok = counts[name] >= 2
                 return {"quality_verdict": {"passed": ok, "failed_criteria": [] if ok else ["groundedness"],
@@ -355,7 +372,8 @@ class SupervisorGraphTest(unittest.TestCase):
             result = workflow.build_graph().invoke(
                 {"research_question": "q", "run_id": "graph-test"}, config={"recursion_limit": 80})
 
-        self.assertEqual(result["final_report"], "report v1")  # 품질 미달 → 재작성본
+        # 품질 미달 → 재작성본: State의 URI가 재작성된 새 파일(rev1)을 가리킨다
+        self.assertIn("_rev1", Path(result["report_path"]).name)
         self.assertTrue(result["quality_verdict"]["passed"])
         self.assertEqual(calls.count("market_evaluation"), 2)  # 충분도 게이트 재작업
         self.assertEqual(calls.count("domain_evaluation"), 2)  # 실패 → 재시도
@@ -439,7 +457,7 @@ class StaleQualityVerdictTest(unittest.TestCase):
             result = workflow.build_graph().invoke(
                 {"research_question": "q", "run_id": "stale-verdict"}, config={"recursion_limit": 80})
 
-        self.assertEqual(result["final_report"], "report v1")
+        self.assertIn("_rev1", Path(result["report_path"]).name)
         self.assertEqual(result["node_status"]["quality_evaluation"], "excluded")
         verdict = result["quality_verdict"]
         self.assertFalse(verdict["evaluated"])  # v0 판정이 v1 판정처럼 남지 않음
@@ -450,13 +468,13 @@ class StaleQualityVerdictTest(unittest.TestCase):
     def test_rework_and_revision_clear_previous_verdict(self) -> None:
         status = {n: "done" for n in initial_control_state("t")["node_status"]}
         stale = {"passed": False, "failed_criteria": ["neutrality"], "rework_targets": [], "feedback": "x"}
-        _, action, _, updates = decide(_state(node_status=status, quality_verdict=stale, final_report="r",
+        _, action, _, updates = decide(_state(node_status=status, quality_verdict=stale, report_path="r",
                                               rework_counts={n: 9 for n in PERSPECTIVE_NODES}))
         self.assertEqual(action, "revise_report")
         self.assertIsNone(updates["quality_verdict"])
         sufficient = {"evidence_items": [e for n in PERSPECTIVE_NODES for e in _evidence(n, 4, 2)],
                       **{n: {"A": {}, "B": {}} for n in PERSPECTIVE_NODES}}
-        _, action, _, updates = decide(_state(node_status=status, final_report="r", **sufficient,
+        _, action, _, updates = decide(_state(node_status=status, report_path="r", **sufficient,
                                               quality_verdict={**stale, "rework_targets": ["trl_evaluation"]}))
         self.assertEqual(action, "rework_quality")
         self.assertIsNone(updates["quality_verdict"])
@@ -512,7 +530,7 @@ class CheckpointResumeTest(unittest.TestCase):
                 self.assertIn("domain_evaluation", snapshot.next)
                 self.assertEqual(snapshot.values["node_status"]["tech_research"], "done")
                 self.assertEqual(snapshot.values["node_status"]["domain_evaluation"], "running")
-                self.assertNotIn("final_report", snapshot.values)
+                self.assertNotIn("report_path", snapshot.values)
                 self.assertEqual(calls.count("tech_research"), 1)
                 self.assertEqual(calls.count("report_writer"), 0)
                 for name, completed in completed_peers.items():
@@ -537,7 +555,7 @@ class CheckpointResumeTest(unittest.TestCase):
         self.assertEqual(result["rework_counts"], {"market_evaluation": 1})
         self.assertEqual(result["run_id"], run_id)
         self.assertEqual(result["node_status"]["domain_evaluation"], "done")
-        self.assertEqual(result["final_report"], "report v1")
+        self.assertIn("_rev1", Path(result["report_path"]).name)
         self.assertTrue(result["quality_verdict"]["passed"])
         self.assertEqual(result["next_nodes"], [])
 

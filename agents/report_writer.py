@@ -87,7 +87,7 @@ GRAPH_DESIGN_NOTE = (
     "재작업 예산)를 읽어 결정론적 정책으로 next_nodes를 정하고, add_conditional_edges가 그 값으로 "
     "분기한다(실행 순서 하드코딩 없음). "
     "State 설계 - 작업 페이로드(technical_evidence, 4관점 평가, evidence_items/references, synthesis, "
-    "faithfulness_check, final_report, quality_verdict)와 제어 메타데이터(run_id, step_count/max_steps, "
+    "faithfulness_check, report_path(보고서 URI), quality_verdict)와 제어 메타데이터(run_id, step_count/max_steps, "
     "next_nodes, last_decision, node_status, attempts, errors, rework_counts, retry_hints, sufficiency, "
     "report_revisions, quality_feedback)를 분리. 결정 로그 전문은 State 밖 JSONL과 LangSmith로 보내고 "
     "run_id로 연결. 병렬 디스패치로 동시에 쓰이는 node_status/errors/evidence_items/references는 리듀서로 병합. "
@@ -128,6 +128,28 @@ def clean_report(markdown: str) -> str:
     return head + sep + tail
 
 
+REPORT_TITLE = "KV Cache 최적화 기술 다관점 평가 보고서"
+
+
+def add_title(markdown: str, state: dict) -> str:
+    """보고서 맨 앞에 제목과 부제(대상 기술·관점·작성일)를 붙인다. LLM이 쓴 H1은 제거한다.
+
+    제목은 장(章)이 아니므로 Markdown 헤딩이 아닌 제목 블록(HTML)으로 넣는다 — 첫 장(章) 헤딩은
+    항상 SUMMARY여야 한다("맨 앞 SUMMARY" 규칙). PDF 변환기가 report-title 스타일로 렌더링한다.
+    """
+    lines = markdown.lstrip().splitlines()
+    while lines and (lines[0].startswith("# ") or not lines[0].strip()):
+        lines.pop(0)
+    techs = " · ".join(
+        f"{name}({info.get('category', '')})" for name, info in (state.get("selected_technologies") or {}).items()
+    )
+    subtitle = " | ".join(p for p in (techs, "장문맥 처리 애플리케이션 관점",
+                                       datetime.now().strftime("%Y-%m-%d")) if p)
+    title_block = (f'<div class="report-title">{REPORT_TITLE}</div>\n'
+                   f'<div class="report-subtitle">{subtitle}</div>\n')
+    return title_block + "\n" + "\n".join(lines).rstrip() + "\n"
+
+
 def complete_references(markdown: str, catalog: list[dict]) -> str:
     """본문에서 인용했지만 REFERENCE에 빠진 ID를 카탈로그로 채운다 (LLM 누락을 결정론적으로 보완).
 
@@ -139,17 +161,26 @@ def complete_references(markdown: str, catalog: list[dict]) -> str:
     if not sep:
         return markdown
     by_id = {c["ref_id"]: c for c in catalog}
+    cited = set(extract_citations(head))
+    # 본문에서 인용하지 않은 참고문헌 항목은 지운다 ("실제로 활용한 자료만 기재").
+    kept = []
+    for line in tail.splitlines():
+        ids = set(extract_citations(line))
+        if ids and not ids & cited:
+            continue
+        kept.append(line)
+    tail = "\n".join(kept)
     listed = set(extract_citations(tail))
     missing = [i for i in dict.fromkeys(extract_citations(head)) if i in by_id and i not in listed]
     if not missing:
-        return markdown
+        return head + sep + tail.rstrip() + "\n"
     lines = []
     for ref_id in sorted(missing, key=lambda x: int(x[1:])):
         c = by_id[ref_id]
-        title = c.get("source") or c.get("url") or "출처"
-        url = f", {c['url']}" if c.get("url") and c.get("url") != title else ""
-        lines.append(f"- [{ref_id}] {title}{url}")
-    return head + sep + tail.rstrip() + "\n\n기타 (본문 인용 보완)\n" + "\n".join(lines) + "\n"
+        title = (c.get("source") or c.get("url") or "출처").rstrip(".")
+        url = f" {c['url']}" if c.get("url") and c.get("url") != title else ""
+        lines.append(f"- {title}.{url} [{ref_id}]")  # 본 목록과 같은 "제목. URL [R#]" 형식
+    return head + sep + tail.rstrip() + "\n\n기타 (웹페이지)\n\n" + "\n".join(lines) + "\n"
 
 
 CITATION_REPAIR_PROMPT = (
@@ -254,7 +285,7 @@ def run(state: GraphState) -> dict:
                 "node": "report_writer",
                 "name": "보고서 생성 Agent",
                 "rag": False,
-                "output": "final_report",
+                "output": "report_path (보고서 파일 URI)",
             },
             {
                 "node": "quality_evaluation",
@@ -310,13 +341,23 @@ def run(state: GraphState) -> dict:
     }
     user_content = json.dumps(payload, ensure_ascii=False, indent=2)
 
-    report_markdown = generate_report(get_llm("generator"), user_content, catalog, state.get("run_id", ""))
+    # 생성 → 인용 자체 점검·1회 보정(generate_report) → 제목 부착 순서. 제목은 인용 점검 대상이 아님.
+    report_markdown = add_title(
+        generate_report(get_llm("generator"), user_content, catalog, state.get("run_id", "")), state
+    )
 
     settings.outputs_path.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     revision = state.get("report_revisions", 0)
-    report_path = settings.outputs_path / f"report_{timestamp}_rev{revision}.md"
+    # 재작성·재작업마다 새 파일을 가리키도록 run_id 접두어를 붙인다(같은 초·같은 rev여도 run별로 구분).
+    run_tag = (state.get("run_id") or "run")[:8]
+    report_path = settings.outputs_path / f"report_{timestamp}_{run_tag}_rev{revision}.md"
+    suffix = 1
+    while report_path.exists():  # 같은 초에 다시 쓰는 경우에도 이전 파일을 덮어쓰지 않는다
+        report_path = settings.outputs_path / f"report_{timestamp}_{run_tag}_rev{revision}_{suffix}.md"
+        suffix += 1
     report_path.write_text(report_markdown, encoding="utf-8")
     print(f"[report_writer] 보고서 저장: {report_path}")
 
-    return {"final_report": report_markdown, "report_path": str(report_path)}
+    # 본문은 파일로만 남기고 State에는 URI(경로)만 둔다.
+    return {"report_path": str(report_path)}
