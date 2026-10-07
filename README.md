@@ -211,8 +211,9 @@ uv run python -m unittest discover -s tests -v   # API 호출 없음
 ## Contributors
 - 전은배 : Supervisor 패턴 설계 및 구현 — 결정론적 라우팅 정책(`graph/supervisor.py`), hub-and-spoke
   그래프 재구성(`graph/workflow.py`), State Schema 제어/페이로드 분리 설계(`graph/state.py`)
-- 박성우 : 동적 동작 검증 테스트 — Supervisor 정책 단위 테스트, 하위 Agent 대역을 이용한 그래프 통합
-  테스트(재작업·실패 재시도/제외·보고서 재작성·무한 루프 방지), 품질 평가 규칙 테스트
+- 박성우 : 체크포인트 재개 검증 테스트 — 대역 Agent 중단 후 임시 SQLite DB를 다시 열어 동일
+  `thread_id`의 `invoke(None, ...)` 재개·완료를 검증. 라이브 통합 테스트에 `quality_verdict`와
+  `next_nodes == []` 검증을 추가하고, `RUN_LIVE_TESTS=1`일 때만 실행하도록 기존 조건 유지
 - 서지원 : 근거 충분도 게이트 기준 설계(근거 수·출처 다양성·정보 부족 판정), 기술 조사·기술 성숙도
   Agent State 경량화(원문 청크 `retrieved_documents` 제거로 체크포인트 비용 절감)
 - 최윤영 : 보고서 품질 평가 노드 설계 — Hybrid(규칙 AND LLM Judge) 4항목(Groundedness·중립성·

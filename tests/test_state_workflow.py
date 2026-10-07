@@ -3,13 +3,17 @@
 - 정책 단위 테스트: decide()가 State에 따라 다른 경로를 고르는지 (순서 하드코딩 아님)
 - 그래프 통합 테스트: 하위 Agent를 가짜 함수로 바꿔 실제 LangGraph를 끝까지 돌려,
   재작업 루프·Fall-back·품질 미달 재작성·종료 보장을 확인한다.
+- 체크포인트 재개: 관점 노드 중단 후 SQLite DB를 다시 열고 같은 thread_id로 재개한다.
 """
 
 from __future__ import annotations
 
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
+
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from config import settings
 from graph import workflow
@@ -193,6 +197,62 @@ class SupervisorGraphTest(unittest.TestCase):
         self.assertEqual(result["next_nodes"], [])
         self.assertLessEqual(result["rework_counts"]["market_evaluation"], settings.max_rework_per_agent)
         self.assertLessEqual(result["report_revisions"], settings.max_report_revisions)
+
+
+class CheckpointResumeTest(unittest.TestCase):
+    def test_resume_after_interrupt_with_reopened_sqlite_checkpoint(self) -> None:
+        calls: list[str] = []
+        runners = _fake_runners(calls, fail_once=set())
+        domain_runner = runners["domain_evaluation"]
+        domain_attempts = 0
+
+        def interrupt_once(state):
+            nonlocal domain_attempts
+            domain_attempts += 1
+            if domain_attempts == 1:
+                # RuntimeError는 _worker가 처리하므로 실제 Ctrl+C처럼 실행을 끊는다.
+                raise KeyboardInterrupt("simulated checkpoint interruption")
+            return domain_runner(state)
+
+        runners["domain_evaluation"] = interrupt_once
+        run_id = "checkpoint-resume-test"
+        config = {
+            "configurable": {"thread_id": run_id},
+            "recursion_limit": settings.graph_recursion_limit,
+        }
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(settings, "outputs_dir", tmp), \
+                patch.dict(workflow.AGENT_RUNNERS, runners):
+            database = str(Path(tmp) / "checkpoints.sqlite")
+            with SqliteSaver.from_conn_string(database) as checkpointer:
+                graph = workflow.build_graph(checkpointer=checkpointer)
+                with self.assertRaisesRegex(KeyboardInterrupt, "simulated checkpoint interruption"):
+                    graph.invoke({"research_question": "q", "run_id": run_id}, config=config)
+
+                snapshot = graph.get_state(config)
+                self.assertIn("domain_evaluation", snapshot.next)
+                self.assertEqual(snapshot.values["node_status"]["tech_research"], "done")
+                self.assertEqual(snapshot.values["node_status"]["domain_evaluation"], "running")
+                self.assertNotIn("final_report", snapshot.values)
+                self.assertEqual(calls.count("tech_research"), 1)
+                self.assertEqual(calls.count("report_writer"), 0)
+
+            # 새 연결·새 그래프로 복구하여 메모리만으로 이어가는 경우를 배제한다.
+            with SqliteSaver.from_conn_string(database) as checkpointer:
+                resumed_graph = workflow.build_graph(checkpointer=checkpointer)
+                self.assertEqual(resumed_graph.get_state(config).values["run_id"], run_id)
+                other_config = {"configurable": {"thread_id": "other-thread"}}
+                self.assertEqual(resumed_graph.get_state(other_config).values, {})
+                result = resumed_graph.invoke(None, config=config)
+                self.assertEqual(resumed_graph.get_state(config).next, ())
+
+        self.assertEqual(domain_attempts, 2)
+        self.assertEqual(calls.count("tech_research"), 1)  # 초기 단계부터 재시작하지 않음
+        self.assertEqual(result["run_id"], run_id)
+        self.assertEqual(result["node_status"]["domain_evaluation"], "done")
+        self.assertEqual(result["final_report"], "report v1")
+        self.assertTrue(result["quality_verdict"]["passed"])
+        self.assertEqual(result["next_nodes"], [])
 
 
 if __name__ == "__main__":
