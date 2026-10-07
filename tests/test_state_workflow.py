@@ -23,9 +23,12 @@ from graph.supervisor import PERSPECTIVE_NODES, assess_sufficiency, decide, init
 TECHS = {"A": {"category": "SW", "core_approach": "a"}, "B": {"category": "HW", "core_approach": "b"}}
 
 
-def _evidence(agent: str, n: int, sources: int) -> list[dict]:
+def _evidence(agent: str, n: int, sources: int, techs=tuple(TECHS)) -> list[dict]:
+    """기술마다 n건, 출처 sources종의 근거 (충분도 게이트는 관점 × 기술 단위로 센다)."""
     return [
-        {"agent": agent, "document_id": f"{agent}-src{i % sources}", "evidence_quote": f"q{i}", "page_or_section": str(i)}
+        {"agent": agent, "technology": tech, "document_id": f"{agent}-{tech}-src{i % sources}",
+         "evidence_quote": f"q{i}", "page_or_section": str(i)}
+        for tech in techs
         for i in range(n)
     ]
 
@@ -118,9 +121,34 @@ class SupervisorPolicyTest(unittest.TestCase):
                                               faithfulness_rounds=settings.max_faithfulness_rounds))
         self.assertEqual((targets, action), (["report_writer"], "write_report"))
 
-    def test_step_cap_forces_termination(self) -> None:
-        targets, action, _, _ = decide(_state(step_count=settings.max_supervisor_steps, final_report="r"))
+    def test_step_cap_still_runs_quality_gate_then_terminates(self) -> None:
+        cap = settings.max_supervisor_steps
+        done = {n: "done" for n in initial_control_state("t")["node_status"]}
+        # 보고서 미작성 → 1회 생성
+        targets, action, _, _ = decide(_state(step_count=cap))
+        self.assertEqual((targets, action), (["report_writer"], "force_report"))
+        # 보고서는 있지만 미평가 → 품질 평가 1회 (상한이어도 필수 게이트는 건너뛰지 않음)
+        status = {**done, "quality_evaluation": "pending"}
+        targets, action, _, _ = decide(_state(step_count=cap + 1, node_status=status, final_report="r"))
+        self.assertEqual((targets, action), (["quality_evaluation"], "force_quality"))
+        # 평가 끝 → 미달이어도 종료
+        verdict = {"passed": False, "failed_criteria": ["neutrality"]}
+        targets, action, reason, _ = decide(_state(step_count=cap + 2, node_status=done, final_report="r",
+                                                   quality_verdict=verdict))
         self.assertEqual((targets, action), ([], "end"))
+        self.assertIn("미달", reason)
+
+    def test_sufficiency_is_judged_per_technology(self) -> None:
+        # Agent 합계로는 출처 2종이지만 B 기술은 단일 출처 → 미달 (합계 판정이 가리던 경우)
+        evidence = _evidence("domain_evaluation", 4, 2, techs=("A",)) + _evidence("domain_evaluation", 4, 1, techs=("B",))
+        verdict = assess_sufficiency(_state(evidence_items=evidence), "domain_evaluation")
+        self.assertFalse(verdict["sufficient"])
+        self.assertIn("B: ", verdict["reason"])
+        self.assertNotIn("A: ", verdict["reason"])
+        self.assertEqual(verdict["per_technology"]["B"]["distinct_sources"], 1)
+        # 공용 자료(technology=None)는 기술별 근거로 세지 않는다
+        shared = [{**e, "technology": None} for e in _evidence("domain_evaluation", 4, 3, techs=("A",))]
+        self.assertFalse(assess_sufficiency(_state(evidence_items=shared), "domain_evaluation")["sufficient"])
 
     def test_sufficiency_flags_insufficient_technology(self) -> None:
         state = _state(trl_evaluation={"A": {"insufficient_evidence": True}, "B": {}},
@@ -143,7 +171,8 @@ def _fake_runners(calls: list[str], fail_once: set[str]):
                 return {"technical_evidence": {"A": {}, "B": {}}}
             if name in PERSPECTIVE_NODES:
                 sources = 1 if (name == "market_evaluation" and counts[name] == 1) else 3
-                return {name: {"A": {}, "B": {}}, "evidence_items": _evidence(name, 4, sources)}
+                techs = tuple(state["selected_technologies"])
+                return {name: {t: {} for t in techs}, "evidence_items": _evidence(name, 4, sources, techs)}
             if name == "synthesis":
                 return {"synthesis": {"agreements": []}}
             if name == "faithfulness_check":

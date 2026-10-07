@@ -81,6 +81,20 @@ class QualityRuleTest(unittest.TestCase):
         self.assertEqual(verdict["failed_criteria"], ["bias_control"])
         self.assertEqual(verdict["rework_targets"], ["market_evaluation"])
 
+    def test_missing_judge_fails_closed(self) -> None:
+        rules = {name: {"passed": True, "issues": []} for name in qe.CRITERIA + ["format"]}
+        verdict = qe.combine(rules, None)
+        self.assertFalse(verdict["passed"])
+        self.assertFalse(verdict["judge_available"])
+        self.assertEqual(verdict["failed_criteria"], qe.CRITERIA)
+        # 일부 항목 판정만 빠져도 그 항목은 미달
+        partial = QualityJudgement(
+            criteria=[CriterionJudgement(criterion=c, passed=True, score=5, issues=[], rework_targets=[])
+                      for c in qe.CRITERIA if c != "neutrality"],
+            feedback="",
+        )
+        self.assertEqual(qe.combine(rules, partial)["failed_criteria"], ["neutrality"])
+
     def test_page_limit_triggers_format_failure(self) -> None:
         with patch.object(qe, "count_pdf_pages", return_value=14):
             verdict = qe.rule_format(GOOD_REPORT)

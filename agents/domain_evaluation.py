@@ -6,9 +6,8 @@
   컨텍스트로 제공한다.
 """
 
-from concurrent.futures import ThreadPoolExecutor
-
 from langchain_core.documents import Document
+from langchain_core.runnables.config import ContextThreadPoolExecutor
 
 from agents.base import (
     documents_to_evidence_items,
@@ -20,7 +19,7 @@ from agents.base import (
 from agents.schemas import QualitativeAssessment
 from graph.state import GraphState
 from rag.retriever import retrieve
-from scripts.download_papers import DOC_TYPE_DOMAIN, DOC_TYPE_TECHNICAL_PAPER
+from scripts.download_papers import DOC_TYPE_DOMAIN, DOC_TYPE_IMPLEMENTATION, DOC_TYPE_TECHNICAL_PAPER
 
 SYSTEM_PROMPT = load_prompt("domain_evaluation")
 AGENT_NAME = "domain_evaluation"
@@ -77,10 +76,18 @@ def _process_technology(
         doc_types=DOC_TYPE_TECHNICAL_PAPER,
         technology=tech_name,
     )
+    if retry_hint:
+        # Supervisor 재작업(관점별 재조사): 기술 논문 1종에만 의존하면 단일 출처라 질의어만
+        # 바꿔서는 출처가 늘지 않는다 → 같은 기술의 공식 구현자료까지 검색 범위를 넓힌다.
+        tech_docs = _dedup_documents([
+            *tech_docs,
+            *retrieve(query, top_k=2, doc_types=DOC_TYPE_IMPLEMENTATION, technology=tech_name),
+        ])
     evidence_items = documents_to_evidence_items(
         tech_docs,
         agent=AGENT_NAME,
         claim=f"{tech_name} 장문맥 처리 애플리케이션 적합성 근거",
+        technology=tech_name,
     )
 
     docs_for_context = _dedup_documents([*tech_docs, *domain_docs])
@@ -116,7 +123,7 @@ def run(state: GraphState) -> dict:
 
     # 기술 간 참조가 없는 독립 작업이므로 병렬 실행한다. 제출 순서대로 결과를 모아
     # (완료 순서가 아님) 순차 실행과 동일한 병합 순서를 보장한다.
-    with ThreadPoolExecutor(max_workers=len(technologies) or 1) as executor:
+    with ContextThreadPoolExecutor(max_workers=len(technologies) or 1) as executor:
         futures = [
             executor.submit(
                 _process_technology, tech_name, technical_evidence, domain_docs, retry_hint

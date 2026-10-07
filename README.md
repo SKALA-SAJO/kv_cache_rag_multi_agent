@@ -39,8 +39,10 @@
 - PDF·README·HTML 4종 코퍼스 기반 정보 추출 — Hybrid RAG(FAISS Dense + BM25, RRF) → Cross-encoder
   재정렬, `doc_type`/`technology` 필터로 Agent별 검색 범위 분리
 - 시장·이해관계자 Agent는 Tavily 외부 검색을 tool-calling으로 호출해 실시간 근거 보강
-- **Supervisor 근거 충분도 게이트** : 관점별 근거 수(≥3)·출처 다양성(≥2종)·`insufficient_evidence`
-  판정을 결정론적으로 계산해, 미달 관점에만 재작업 지시(`retry_hints`)를 내려보냄
+- **Supervisor 근거 충분도 게이트** : **관점 × 기술** 단위로 근거 수(≥3)·출처 다양성(≥2종)·`insufficient_evidence`
+  판정을 결정론적으로 계산해, 미달 관점에만 재작업 지시(`retry_hints`)를 내려보냄. Agent 합계로 세면
+  한 기술의 근거가 다른 기술의 단일 출처 의존을 가리므로 기술별로 판정한다
+  (예: 도메인 Agent가 기술마다 자기 논문 1편에만 의존 → 재작업 시 공식 구현자료까지 검색 범위 확장)
 - **Faithfulness Check** : 종합 claim을 근거와 대조, 실패 claim의 출처 Agent만 재작업 대상으로 Supervisor에 보고
 - **Fall-back** : 하위 Agent 예외 → 1회 재시도 → 그래도 실패하면 **제외**하고 보고서에
   "정보 부족(실행 실패로 제외)"으로 표기 (병렬 실행 중 한 Agent가 죽어도 그래프는 계속)

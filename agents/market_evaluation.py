@@ -6,9 +6,8 @@
 get_external_search_tool()이 None이라 tool-calling이 자동으로 스킵됨)로 보강한다.
 """
 
-from concurrent.futures import ThreadPoolExecutor
-
 from langchain_core.documents import Document
+from langchain_core.runnables.config import ContextThreadPoolExecutor
 
 from agents.base import (
     documents_to_evidence_items,
@@ -74,6 +73,7 @@ def _process_technology(
         search_results,
         agent=AGENT_NAME,
         claim=f"{tech_name}의 시장성 평가에 사용한 외부 검색 근거",
+        technology=tech_name,
     )
     references = search_results_to_references(search_results)
     return tech_name, result.model_dump(), evidence_items, references
@@ -103,7 +103,7 @@ def run(state: GraphState) -> dict:
     # 기술 간 참조가 없는 독립 작업이므로 병렬 실행한다(외부검색 tool-calling 포함 —
     # 가장 느린 구간). 제출 순서대로 결과를 모아(완료 순서가 아님) 순차 실행과 동일한
     # 병합 순서를 보장한다.
-    with ThreadPoolExecutor(max_workers=len(technologies) or 1) as executor:
+    with ContextThreadPoolExecutor(max_workers=len(technologies) or 1) as executor:
         futures = [
             executor.submit(
                 _process_technology,
