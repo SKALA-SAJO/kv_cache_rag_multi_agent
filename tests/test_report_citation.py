@@ -42,7 +42,8 @@ class CitationSelfCheckTest(unittest.TestCase):
 
     def test_good_draft_is_used_without_repair(self) -> None:
         llm = _ScriptedLLM(self.good)
-        self.assertEqual(report_writer.generate_report(llm, "{}", self.catalog), self.good)
+        expected = report_writer.ensure_trl_estimate_notice(self.good)  # 4.1 TRL 추정 고지만 추가
+        self.assertEqual(report_writer.generate_report(llm, "{}", self.catalog), expected)
         self.assertEqual(len(llm.calls), 1)
 
     def test_dropped_citations_are_repaired_once(self) -> None:
@@ -88,6 +89,27 @@ class BoldCitationTest(unittest.TestCase):
         self.assertNotIn("**", cleaned.split("## REFERENCE")[0].replace("**평가", ""))
         self.assertEqual(report_writer.citation_issues(cleaned, catalog), [])
         self.assertEqual(report_writer.clean_report("근거 **[R2]** 이다"), "근거 [R2] 이다")
+
+
+class TrlEstimateNoticeTest(unittest.TestCase):
+    REPORT = "## SUMMARY\n요약\n\n## 4. 다관점 평가\n### 4.1 기술 성숙도 관점\n두 기술 모두 TRL 6 [R1].\n\n### 4.2 시장성 관점\n내용\n"
+
+    def test_notice_is_inserted_into_trl_section(self) -> None:
+        # 과제 필수: TRL은 공개 정보 기반 추정임을 반드시 명시
+        fixed = report_writer.ensure_trl_estimate_notice(self.REPORT)
+        section = fixed.split("### 4.1")[1].split("### 4.2")[0]
+        self.assertIn("공개 정보 기반 추정", section)
+        self.assertEqual(report_writer.ensure_trl_estimate_notice(fixed), fixed)  # 중복 삽입 없음
+
+    def test_existing_notice_or_missing_section_is_left_alone(self) -> None:
+        stated = self.REPORT.replace("두 기술 모두", "공개 정보 기반 추정으로 두 기술 모두")
+        self.assertEqual(report_writer.ensure_trl_estimate_notice(stated), stated)
+        self.assertEqual(report_writer.ensure_trl_estimate_notice("## SUMMARY\n요약\n"), "## SUMMARY\n요약\n")
+
+    def test_generated_report_always_carries_notice(self) -> None:
+        with patch.object(report_writer, "log_event"):
+            report = report_writer.generate_report(_ScriptedLLM(self.REPORT), "{}", [])
+        self.assertIn("공개 정보 기반 추정", report)
 
 
 if __name__ == "__main__":

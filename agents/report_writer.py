@@ -209,6 +209,29 @@ def citation_issues(report: str, catalog: list[dict]) -> list[str]:
     return issues
 
 
+TRL_ESTIMATE_NOTICE = (
+    "※ 아래 TRL은 논문·공개 구현·기술 문서 등 **공개 정보 기반 추정**이며, KV Cache 기술은 논문 발표 "
+    "시점과 실제 채택 사이에 시차가 있어 실제 성숙도와 다를 수 있다."
+)
+_TRL_SECTION = re.compile(r"^(#{2,3}\s*4\.1[^\n]*\n)", flags=re.MULTILINE)
+
+
+def ensure_trl_estimate_notice(report: str) -> str:
+    """4.1(기술 성숙도) 절에 'TRL은 공개 정보 기반 추정' 고지를 보장한다 (과제 필수 명시 사항).
+
+    LLM이 빠뜨려도 결정론적으로 넣는다. 이미 "공개 정보 기반" 표현이 있으면 그대로 두고,
+    4.1 헤딩이 없으면 손대지 않는다.
+    """
+    match = _TRL_SECTION.search(report)
+    if match is None:
+        return report
+    end = report.find("\n## ", match.end())
+    section = report[match.end(): end if end != -1 else len(report)]
+    if "공개 정보 기반" in section:
+        return report
+    return report[: match.end()] + "\n" + TRL_ESTIMATE_NOTICE + "\n" + report[match.end():]
+
+
 def generate_report(llm, user_content: str, catalog: list[dict], run_id: str = "") -> str:
     """보고서를 생성하고, 인용 자체 점검에 미달하면 1회만 보정 요청한다 (생성 → 점검 → 보정).
 
@@ -218,7 +241,7 @@ def generate_report(llm, user_content: str, catalog: list[dict], run_id: str = "
     """
     messages = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_content)]
     draft = llm.invoke(messages).content
-    report = complete_references(clean_report(draft), catalog)
+    report = ensure_trl_estimate_notice(complete_references(clean_report(draft), catalog))
     issues = citation_issues(report, catalog)
     if not issues or not catalog:
         return report
@@ -226,7 +249,7 @@ def generate_report(llm, user_content: str, catalog: list[dict], run_id: str = "
     print(f"[report_writer] 인용 자체 점검 미달 {len(issues)}건 → 1회 보정 요청", flush=True)
     messages += [AIMessage(content=draft), HumanMessage(content=CITATION_REPAIR_PROMPT.format(
         issues="\n".join(f"- {i}" for i in issues)))]
-    repaired = complete_references(clean_report(llm.invoke(messages).content), catalog)
+    repaired = ensure_trl_estimate_notice(complete_references(clean_report(llm.invoke(messages).content), catalog))
     remaining = citation_issues(repaired, catalog)
     adopted = len(remaining) < len(issues)
     log_event(run_id, "report_writer", "citation_repair", issues=issues, remaining=remaining, adopted=adopted)
