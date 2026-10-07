@@ -57,7 +57,10 @@
   필수 목차(SUMMARY/REFERENCE)도 검사. 미달 시 원인이 근거면 해당 관점 재작업, 서술이면 보고서 재작성 루프
 - 본문 모든 주장에 `[R#]` 인용 ID → REFERENCE와 1:1 연결 (규칙 기반 Groundedness 검사가 가능)
 - 실행마다 `outputs/`에 보고서(`report_*_rev{n}.md`), 품질 verdict(`*.quality.json`), 결정 로그
-  (`traces/{run_id}.jsonl`), 제출용 PDF(`Agent-Output_*.pdf`) 생성
+  (`traces/{run_id}.jsonl`), 최종본(`report_*_final.md`), 제출용 PDF(`Agent-Output_*.pdf`) 생성
+- **결정 이력 부록** : 최종본·제출 PDF 끝에 이번 run의 Supervisor 결정 이력 표(step·결정·대상·사유)와
+  `run_id`를 자동 첨부 → 보고서만으로 동적 경로를 확인하고 LangSmith 트레이스와 대조 가능.
+  부록은 실행 메타데이터라 품질 평가 대상이 아니며, 품질 평가·종료 결정까지 끝난 뒤 붙인다
 
 
 ## Tech Stack
@@ -68,7 +71,7 @@
   - Held-out 15문항 평가: **Hit Rate@1 0.533, Hit Rate@3 0.867, Hit Rate@5 0.867, MRR 0.678**
 - Embedding : BAAI/bge-m3 (다국어·긴 입력·Dense/Sparse 지원)
 - External Search : Tavily (LangChain 공식 통합, 구조화 JSON, 무료 티어 재현 가능)
-- Observability : LangSmith (루트 run id = `run_id`) + 외부 JSONL 결정 로그
+- Observability : LangSmith (루트 run id = `run_id`, Supervisor 결정 span·태그·실행 요약 feedback) + 외부 JSONL 결정 로그
 
 
 ## Agents
@@ -103,6 +106,9 @@ Supervisor 자체는 LLM이 아닌 **결정론적 정책**이다. LLM 판정이 
 - 관측성 위치 : 결정 로그 전문(step, action, targets, **reason**, 충분도 판정)은 State 밖
   `outputs/traces/{run_id}.jsonl`과 LangSmith로 보낸다 ([`graph/observability.py`](graph/observability.py)).
   State에는 최신 결정 1건(`last_decision`)만 덮어써서 트레이스의 supervisor 노드 출력에서도 사유가 보인다.
+  LangSmith에는 매 결정을 supervisor 노드 아래 `decision: {action} → {대상}` span과 `action:*` 태그로,
+  종료 후 루트 run에 `supervisor_routes`·`supervisor_reworks`·`quality_passed` feedback 점수로 남겨
+  트리·필터만으로 경로가 보인다(끝난 run은 태그 갱신을 받지 않아 사후 기록용 feedback 사용).
 - 지속성 비용 : 이전 버전의 `retrieved_documents`(청크 원문 전체)를 State에서 제거. 근거는 300자로
   자른 `evidence_items`만 두고 리듀서가 매 병합마다 중복 제거 → State 한 건의 크기는 억제됨. 보고서 이력·verdict·PDF는
   파일로만 저장. 인용 카탈로그도 저장하지 않고 `references`에서 결정론적으로 재구성.
@@ -195,7 +201,7 @@ Supervisor 정책 우선순위 (`graph/supervisor.py` `decide`):
 │   ├── state.py                 # State 스키마 (제어/페이로드 분리, 리듀서)
 │   ├── supervisor.py            # Supervisor 정책·근거 충분도 게이트·라우팅
 │   ├── workflow.py              # 그래프 조립 (hub-and-spoke, 실패 래퍼)
-│   └── observability.py         # 외부 결정 로그(JSONL)·실행 시간
+│   └── observability.py         # 외부 결정 로그(JSONL)·LangSmith 결정 span/feedback·결정 이력 부록
 ├── agents/                   # ── 하위 Agent ──
 │   ├── base.py                  # LLM 호출·외부 검색 tool-calling·인용 카탈로그
 │   ├── schemas.py               # 구조화 출력 스키마 (평가·검증·품질 verdict)
@@ -228,7 +234,8 @@ uv run python app.py --resume <run_id>     # 중단된 실행을 체크포인트
 ```
 콘솔에 Supervisor 결정이 `[supervisor] step N | action -> targets | reason` 형식으로 실시간 출력되고,
 종료 시 결정 이력·라우팅/재작업 횟수·품질 판정이 요약된다. LangSmith 프로젝트(`LANGSMITH_PROJECT`)에서
-`kv-cache-supervisor` 트레이스를 열면 supervisor ↔ 하위 Agent 왕복과 재작업 경로를 확인할 수 있다.
+`kv-cache-supervisor` 트레이스를 열면 supervisor ↔ 하위 Agent 왕복과 재작업 경로를 확인할 수 있다
+(각 supervisor 노드 아래 `decision: …` span에 결정·사유, 프로젝트 목록의 `supervisor_reworks` 등 feedback 열로 필터).
 
 ### 테스트
 ```bash

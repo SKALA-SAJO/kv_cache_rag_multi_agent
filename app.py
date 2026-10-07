@@ -15,7 +15,6 @@ import os
 import sys
 import time
 import uuid
-from collections import Counter
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -23,9 +22,17 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 from langgraph.checkpoint.sqlite import SqliteSaver  # noqa: E402
+from pypdf import PdfReader  # noqa: E402
 
 from config import settings  # noqa: E402
-from graph.observability import print_timing_summary, summarize_decisions, trace_path  # noqa: E402
+from graph.observability import (  # noqa: E402
+    count_reworks,
+    print_timing_summary,
+    record_run_feedback,
+    render_decision_appendix,
+    summarize_routing,
+    trace_path,
+)
 from graph.workflow import build_graph  # noqa: E402
 from rag.external_search import register as register_external_search  # noqa: E402
 from scripts.report_to_pdf import DEFAULT_CAMPUS, DEFAULT_CLASS, DEFAULT_TEAM_NAMES, OUTPUTS_DIR  # noqa: E402
@@ -40,13 +47,12 @@ CHECKPOINT_DB = OUTPUTS_DIR / "checkpoints.sqlite"
 
 def _print_orchestration_summary(result: dict) -> None:
     run_id = result.get("run_id", "")
-    decisions = summarize_decisions(run_id)
+    decisions = summarize_routing(run_id)
     print("\n=== Supervisor 결정 이력 ===")
     for d in decisions:
         print(f"  step {d['step']:>2} | {d['action']:<22} -> {d['targets'] or 'END'}")
-    actions = Counter(d["action"] for d in decisions)
-    reworks = sum(v for k, v in actions.items() if k.startswith("rework") or k == "revise_report")
-    print(f"  라우팅 {len(decisions)}회, 재작업/재작성 {reworks}회, rework_counts={result.get('rework_counts', {})}")
+    print(f"  라우팅 {len(decisions)}회, 재작업/재작성 {count_reworks(decisions)}회, "
+          f"rework_counts={result.get('rework_counts', {})}")
     verdict = result.get("quality_verdict") or {}
     print(f"  품질 평가: {'PASS' if verdict.get('passed') else 'FAIL ' + str(verdict.get('failed_criteria'))}")
     print(f"  결정 로그: {trace_path(run_id)}")
@@ -102,10 +108,24 @@ def main() -> None:
     _print_orchestration_summary(result)
     print(f"\n[timing] 전체 실행 시간: {total_elapsed:.1f}초")
 
-    # 제출용 PDF(Agent-Output)를 이번 실행의 최종 보고서로 갱신한다. 실패해도 .md는 이미 저장됨.
+    # 최종본 = 품질 평가를 거친 보고서 + Supervisor 결정 이력 부록. 부록은 실행 메타데이터라 품질 평가
+    # 대상이 아니고, 결정(품질 평가·종료 포함)이 모두 끝난 뒤에야 완성되므로 여기서 붙인다.
+    report_path = Path(result["report_path"])
+    final_path = report_path.with_name(f"{report_path.stem}_final.md")
+    final_path.write_text(
+        result["final_report"].rstrip() + "\n\n" + render_decision_appendix(result["run_id"]), encoding="utf-8"
+    )
+    print(f"[app] 최종 보고서(결정 이력 부록 포함): {final_path}")
+    if not args.resume:  # 재개 실행은 루트 run id가 run_id와 달라 기록 대상이 없다
+        record_run_feedback(result["run_id"], (result.get("quality_verdict") or {}).get("passed"))
+
+    # 제출용 PDF(Agent-Output)를 이번 실행의 최종본으로 갱신한다. 실패해도 .md는 이미 저장됨.
     try:
         pdf_path = OUTPUTS_DIR / f"Agent-Output_{DEFAULT_CAMPUS}_{DEFAULT_CLASS}_{DEFAULT_TEAM_NAMES}.pdf"
-        convert_report_to_pdf(Path(result["report_path"]), pdf_path)
+        convert_report_to_pdf(final_path, pdf_path)
+        pages = len(PdfReader(str(pdf_path)).pages)
+        flag = "" if pages <= settings.max_report_pages else f" ⚠️ 최대 {settings.max_report_pages}쪽 초과"
+        print(f"[app] 제출용 PDF: {pdf_path} ({pages}쪽{flag})")
     except Exception as exc:  # noqa: BLE001
         print(f"[app] PDF 변환 실패(보고서 .md는 저장됨): {exc}", file=sys.stderr)
 

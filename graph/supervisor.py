@@ -30,7 +30,7 @@ from typing import Any
 from langgraph.graph import END
 
 from config import settings
-from graph.observability import log_event
+from graph.observability import log_event, trace_decision
 from graph.state import GraphState
 
 END_ACTION = "end"
@@ -379,6 +379,7 @@ def supervisor_node(state: GraphState) -> dict[str, Any]:
         sufficiency=updates.get("sufficiency"),
         rework_counts=updates.get("rework_counts", state.get("rework_counts")),
     )
+    trace_decision(decision, updates.get("sufficiency"))
     return {**updates, "next_nodes": targets, "last_decision": decision}
 
 
