@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     # InfiniGen 10건·8종으로 통과해 검색 방식만으로 기준을 낮추지 않는다.
     min_evidence_items: int = 3
     min_distinct_sources: int = 2
+    # 시장성은 최신 상용화 근거가 필요하므로 기술마다 URL이 있는 외부 검색 출처를
+    # 최소 1종 요구한다. RAG 자료만으로 개수 기준을 채워도 이 조건은 대체되지 않는다.
+    min_market_external_sources: int = 1
     # LangGraph 자체 recursion_limit (Supervisor 스텝 상한과 별개의 2차 가드).
     # 최악 = init 1 + Supervisor 33회(상한 30 + 보고서·품질 2 + 종료 1) + 하위 노드 32회 = 66 < 80.
     graph_recursion_limit: int = 80

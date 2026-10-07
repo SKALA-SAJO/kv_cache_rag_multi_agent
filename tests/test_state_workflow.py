@@ -26,8 +26,12 @@ TECHS = {"A": {"category": "SW", "core_approach": "a"}, "B": {"category": "HW", 
 
 def _evidence(agent: str, n: int, sources: int, techs=tuple(TECHS)) -> list[dict]:
     """기술마다 n건, 출처 sources종의 근거 (충분도 게이트는 관점 × 기술 단위로 센다)."""
+    external = agent in {"market_evaluation", "stakeholder_evaluation"}
     return [
-        {"agent": agent, "technology": tech, "document_id": f"{agent}-{tech}-src{i % sources}",
+        {"agent": agent, "technology": tech,
+         "document_id": None if external else f"{agent}-{tech}-src{i % sources}",
+         "source_url": f"https://example.org/{agent}/{tech}/{i % sources}" if external else None,
+         "source_type": "external_search" if external else "RAG",
          "evidence_quote": f"q{i}", "page_or_section": str(i)}
         for tech in techs
         for i in range(n)
@@ -238,10 +242,40 @@ class SupervisorPolicyTest(unittest.TestCase):
                        evidence_items=_evidence("trl_evaluation", 5, 3))
         self.assertFalse(assess_sufficiency(state, "trl_evaluation")["sufficient"])
 
+    def test_market_requires_external_source_for_each_technology(self) -> None:
+        rag_only = [
+            {**item, "agent": "market_evaluation"}
+            for item in _evidence("trl_evaluation", 4, 2)
+        ]
+        state = _state(market_evaluation={"A": {}, "B": {}}, evidence_items=rag_only)
+        verdict = assess_sufficiency(state, "market_evaluation")
+        self.assertFalse(verdict["sufficient"])
+        self.assertIn("A: 외부 검색 출처 0종", verdict["reason"])
+        self.assertIn("B: 외부 검색 출처 0종", verdict["reason"])
+
+        external = _evidence("market_evaluation", 1, 1)
+        verdict = assess_sufficiency(_state(market_evaluation={"A": {}, "B": {}},
+                                             evidence_items=rag_only + external), "market_evaluation")
+        self.assertTrue(verdict["sufficient"])
+        self.assertEqual(verdict["per_technology"]["A"]["external_search_sources"], 1)
+        self.assertEqual(verdict["per_technology"]["B"]["external_search_sources"], 1)
+
+    def test_market_without_external_source_is_routed_for_rework(self) -> None:
+        status = {**initial_control_state("t")["node_status"], "tech_research": "done",
+                  **{n: "done" for n in PERSPECTIVE_NODES}}
+        evidence = [e for n in PERSPECTIVE_NODES if n != "market_evaluation" for e in _evidence(n, 4, 2)]
+        evidence += [{**item, "agent": "market_evaluation"} for item in _evidence("trl_evaluation", 4, 2)]
+        targets, action, reason, _ = decide(_state(
+            node_status=status, evidence_items=evidence,
+            **{n: {"A": {}, "B": {}} for n in PERSPECTIVE_NODES},
+        ))
+        self.assertEqual((targets, action), (["market_evaluation"], "rework_insufficient"))
+        self.assertIn("외부 검색 출처 0종", reason)
+
     def test_stakeholder_tavily_urls_use_common_sufficiency_gate(self) -> None:
         items = [
             {"agent": "stakeholder_evaluation", "technology": tech,
-             "source_url": f"https://example.org/{tech}/{i % 2}"}
+             "source_url": f"https://example.org/{tech}/{i % 2}", "source_type": "external_search"}
             for tech in TECHS for i in range(settings.min_evidence_items)
         ]
         state = _state(stakeholder_evaluation={"A": {}, "B": {}}, evidence_items=items)

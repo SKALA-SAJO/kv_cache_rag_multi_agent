@@ -86,7 +86,8 @@ def assess_sufficiency(state: GraphState, agent: str) -> dict[str, Any]:
     1편에만 의존해도 합치면 출처 2종). 그래서 선정 기술마다 따로 본다.
     기준: 기술마다 (1) 그 기술로 태깅된 evidence_items 수 ≥ min_evidence_items,
          (2) 서로 다른 출처 수 ≥ min_distinct_sources (단일 출처 의존 방지),
-         (3) insufficient_evidence=true가 아님.
+         (3) 시장성은 외부 검색 URL 출처 ≥ min_market_external_sources,
+         (4) insufficient_evidence=true가 아님.
     두 기술 공용 자료(technology=None)는 기술별 근거로 세지 않는다.
     """
     output = state.get(agent) or {}
@@ -97,22 +98,34 @@ def assess_sufficiency(state: GraphState, agent: str) -> dict[str, Any]:
     for tech in state.get("selected_technologies", {}):
         tech_items = [e for e in items if e.get("technology") == tech]
         sources = {e.get("document_id") or e.get("source_url") for e in tech_items} - {None}
+        external_sources = {
+            e["source_url"] for e in tech_items
+            if e.get("source_type") == "external_search" and e.get("source_url")
+        }
         tech_problems = []
         if len(tech_items) < settings.min_evidence_items:
             tech_problems.append(f"근거 {len(tech_items)}건 < {settings.min_evidence_items}")
         if len(sources) < settings.min_distinct_sources:
             tech_problems.append(f"출처 {len(sources)}종 < {settings.min_distinct_sources} (단일 출처 의존)")
+        if agent == "market_evaluation" and len(external_sources) < settings.min_market_external_sources:
+            tech_problems.append(
+                f"외부 검색 출처 {len(external_sources)}종 < {settings.min_market_external_sources}"
+            )
         value = output.get(tech)
         if isinstance(value, dict) and value.get("insufficient_evidence"):
             tech_problems.append("Agent가 정보 부족으로 판정")
-        per_tech[tech] = {"evidence_count": len(tech_items), "distinct_sources": len(sources)}
+        per_tech[tech] = {
+            "evidence_count": len(tech_items),
+            "distinct_sources": len(sources),
+            "external_search_sources": len(external_sources),
+        }
         if tech_problems:
             problems.append(f"{tech}: {', '.join(tech_problems)}")
 
     return {
         "sufficient": not problems,
         "per_technology": per_tech,
-        "reason": "; ".join(problems) if problems else "기술별 근거 수·출처 다양성 기준 충족",
+        "reason": "; ".join(problems) if problems else "기술별 근거 수·출처 다양성·출처 유형 기준 충족",
     }
 
 
