@@ -4,6 +4,13 @@
   - 제어 vs 페이로드 분리 : State를 "작업 페이로드"와 "제어 메타데이터" 두 블록으로 나눈다.
     Supervisor의 라우팅 정책(graph/supervisor.py)은 제어 블록 + 페이로드의 "존재·충분도"만 읽고,
     페이로드 본문 해석은 하위 Agent/평가 노드의 몫이다.
+  - 레이어드 : 두 블록을 주석 구분이 아니라 별도 TypedDict로 선언한다. PayloadState(작업 결과)와
+    ControlState(제어 메타)를 따로 정의하고 GraphState가 둘을 상속해 그래프의 State 스키마가 된다.
+    "이 키는 어느 층인가"가 타입 수준에서 드러나고, 층별 키 집합이 겹치지 않음을 테스트로 고정한다
+    (tests/test_state_layers.py). 하위 Agent별 Worker State 타입은 두지 않았다 — 각 Agent가 자기
+    키만 쓰고(관점별 결과 키가 서로 다르다) 실행 상태는 ControlState의 node_status/attempts/errors가
+    노드 키로 나눠 담기 때문이다. Agent 본체는 PayloadState 키만 반환하고, node_status/errors는
+    graph/workflow.py의 _worker 래퍼가 노드 키로 기록한다(제어 키는 Supervisor와 래퍼만 쓴다).
   - 관측성 위치 : 결정 로그(사유 포함) 전문은 State가 아니라 외부 JSONL(outputs/traces/
     {run_id}.jsonl) + LangSmith 트레이스로 보낸다. State에는 "마지막 결정 1건"(last_decision)만
     덮어쓰기로 남겨, 트레이스 화면에서 노드 출력만 봐도 라우팅 사유가 보이게 한다.
@@ -80,8 +87,9 @@ def dedupe_evidence_items(existing: list[dict], new: list[dict]) -> list[dict]:
     return result
 
 
-class GraphState(TypedDict, total=False):
-    # ── 작업 페이로드 (하위 Agent가 생산, Supervisor는 존재/충분도만 본다) ──────────
+class PayloadState(TypedDict, total=False):
+    """작업 페이로드 층: 하위 Agent가 생산하고 Supervisor는 존재·충분도만 읽는다."""
+
     research_question: str
     selected_technologies: dict[str, dict[str, Any]]
     evaluation_rubric: dict[str, Any]
@@ -101,7 +109,10 @@ class GraphState(TypedDict, total=False):
     report_path: str  # 보고서 URI — 본문은 파일로만 두고 State에는 경로만 (재작성마다 새 파일)
     quality_verdict: dict[str, Any]  # 품질 평가 verdict (구조화, Hybrid)
 
-    # ── 제어 메타데이터 (라우팅·종료·재개에 필요한 최소치) ─────────────────────────
+
+class ControlState(TypedDict, total=False):
+    """제어 메타 층: 라우팅·종료·재개에 필요한 최소치. Supervisor와 _worker 래퍼만 쓰고 Agent 본체는 쓰지 않는다."""
+
     run_id: str  # ★ 상관 키: thread_id = LangSmith run id = 결정 로그 파일명
     step_count: int  # Supervisor 실행 횟수 (종료 가드)
     max_steps: int
@@ -117,3 +128,7 @@ class GraphState(TypedDict, total=False):
     faithfulness_rounds: int  # 검증 실패로 재작업을 요청한 라운드 수 (종료 가드)
     report_revisions: int  # 품질 평가 미달로 보고서를 다시 쓴 횟수
     quality_feedback: str  # Supervisor → report_writer 재작성 지시
+
+
+class GraphState(PayloadState, ControlState, total=False):
+    """그래프가 쓰는 State 스키마 = 페이로드 층 + 제어 층의 합성(키는 두 층이 겹치지 않는다)."""

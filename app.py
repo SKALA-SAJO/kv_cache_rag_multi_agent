@@ -89,6 +89,7 @@ def main() -> None:
     config = {
         "configurable": {"thread_id": run_id},
         "recursion_limit": settings.graph_recursion_limit,
+        "max_concurrency": settings.max_concurrency,
         "run_name": "kv-cache-supervisor",
         "tags": ["supervisor-pattern", "resume" if args.resume else "fresh"],
         "metadata": {"run_id": run_id},
