@@ -111,26 +111,40 @@ Supervisor 자체는 LLM이 아닌 **결정론적 정책**이다. LLM 판정이 
   LangSmith에는 매 결정을 supervisor 노드 아래 `decision: {action} → {대상}` span과 `action:*` 태그로,
   종료 후 루트 run에 `supervisor_routes`·`supervisor_reworks`·`quality_passed` feedback 점수로 남겨
   트리·필터만으로 경로가 보인다(끝난 run은 태그 갱신을 받지 않아 사후 기록용 feedback 사용).
-- 지속성 비용 : 이전 버전의 `retrieved_documents`(청크 원문 전체)를 State에서 제거. 근거는 300자로
-  자른 `evidence_items`만 두고 리듀서가 매 병합마다 중복 제거 → State 한 건의 크기는 억제됨. 보고서 이력·verdict·PDF는
-  파일로만 저장. 인용 카탈로그도 저장하지 않고 `references`에서 결정론적으로 재구성.
-  - 실측(2026-10-07, 기본 질문 1회 실행) : 10스텝·재작업 1회 실행은 `outputs/checkpoints.sqlite`에 체크포인트
-    22개·약 3.4MB, 15스텝·재작업 2회 실행은 32개·약 5.6MB가 쌓였다. State는 종료 시점에 약 216KB이며
-    `evidence_items`(182건)가 113KB로 절반을 차지하고 `references` 18KB, `final_report` 15KB가 뒤를 잇는다.
-  - 원인 : 큰 건 State가 아니라 **스냅샷 횟수**다. SqliteSaver는 superstep마다 변경분이 아니라 State 전체를 다시
+- 지속성 비용 : State에는 원문 청크 대신 300자 인용 근거만 두고 리듀서로 중복을 제거해 한 건의 크기를 억제하고,
+  용량을 키우는 스냅샷 횟수는 재작업·스텝 예산으로 묶으며, 정상 종료한 run은 마지막 체크포인트만 남겨 디스크를 회수한다
+  (실측 2개 run 합산 8.95MB → 0.46MB).
+  - ① State 내용 : 이전 버전의 `retrieved_documents`(청크 원문 전체)를 State에서 제거. 근거는 300자로 자른
+    `evidence_items`만 두고 리듀서가 매 병합마다 중복 제거. 보고서 이력·verdict·PDF는 파일로만 저장하고 인용 카탈로그는
+    저장하지 않고 `references`에서 결정론적으로 재구성.
+  - 실측(2026-10-07, 기본 질문 실행) : 10스텝·재작업 1회 실행은 `outputs/checkpoints.sqlite`에 체크포인트 22개·약 3.4MB,
+    15스텝·재작업 2회 실행은 32개·약 5.6MB가 쌓였다. State는 종료 시점에 약 216KB이며 `evidence_items`(182건)가
+    113KB로 절반, `references` 18KB, `final_report` 15KB가 뒤를 잇는다. 체크포인트 22개 전체에 누적된 필드별 비중은
+    `evidence_items` 54%, `references` 8%, `stakeholder_evaluation` 8%, `technical_evidence` 5%, `faithfulness_check` 5%.
+  - 원인 : 큰 건 State 한 건이 아니라 **스냅샷 횟수**다. SqliteSaver는 superstep마다 변경분이 아니라 State 전체를 다시
     저장한다. Supervisor 1스텝 = 체크포인트 약 2개(supervisor + 하위 노드)이고 State는 단조 증가해 첫 평가 이후
     130~230KB이므로, 용량 ≈ 체크포인트 수 × 약 0.15~0.2MB로 스텝에 비례한다. `MAX_SUPERVISOR_STEPS=30`까지 가면
-    체크포인트 약 60개로 12~14MB가 되며, 보고된 14MB와 같은 규모다(추정). 또 DB는 실행(thread)마다 누적되고 자동 정리되지 않는다.
-  - 대응 : 재작업 예산(`MAX_REWORK_PER_AGENT`, `MAX_FAITHFULNESS_ROUNDS`)과 스텝 상한이 곧 크기 상한이다. 완료된
-    실행은 마지막 체크포인트만 남기고 지우면 DB 사본 시뮬레이션 기준 약 0.23MB(약 93% 감소)로 줄며, 재개가 필요 없어진
-    실행에만 적용한다(진행 중 실행을 지우면 `--resume` 불가). 수동 정리는 `sqlite3 outputs/checkpoints.sqlite
-    "delete from checkpoints where thread_id='<run_id>'; delete from writes where thread_id='<run_id>'; vacuum;"`.
-    DB는 git에 포함되지 않는 산출물이므로 제출 전에 삭제해도 된다.
+    체크포인트 약 60개로 12~14MB가 되며, 보고된 14MB와 같은 규모다(추정). DB는 실행(thread)마다 누적된다.
+  - ② 실행 중 상한 : 재작업 예산(`MAX_REWORK_PER_AGENT`, `MAX_FAITHFULNESS_ROUNDS`)과 스텝 상한이 곧 크기 상한이다.
+  - ③ 종료 후 정리([`graph/checkpoint_maintenance.py`](graph/checkpoint_maintenance.py)) : **정상 종료한 run**(더 실행할
+    노드가 없고 `final_report`가 있음)만 마지막 체크포인트를 남기고 이전 체크포인트·writes를 지운 뒤 VACUUM한다.
+    기본 동작이며 `python app.py --keep-checkpoints`로 끌 수 있다. 마지막 체크포인트가 최종 State 전체를 담으므로
+    근거·보고서·verdict 손실은 없다. Ctrl+C·예외로 끊긴 run은 정리하지 않아 `--resume`이 가능하다. 효과(실측 DB 사본에
+    이 함수를 적용): 두 run 합산 8.95MB → 0.46MB(약 95% 감소), run당 약 0.23MB. **한계** : 정리는 종료 후에 하므로
+    실행 중 최대 용량은 줄지 않고, 정리한 run은 `--resume`할 수 없다(이미 끝난 run).
+  - 검토 후 제외(인용문 축소) : 인용 길이를 300자에서 줄이는 안은 채택하지 않았다. 강의자료 PDF 146쪽 표에서
+    Truncation/Trimming은 "잘려나간 부분의 정보(완전 손실)"를 포기하는 방식으로 "약간의 정보 손실은 감수 가능"할 때의
+    선택이고, "숫자, 출처처럼 틀리면 안 되는 값이 많을 경우"는 같은 표의 구조화 출력·원본 보관 방식(3·4번)의 고려 포인트로
+    제시된다. 우리 `evidence_items`는 수치·출처 인용이 핵심이고 `faithfulness_check`와 품질 Judge가 이 인용문을 근거로
+    판정하는데, 인용문이 거의 전부 상한 300자에 차 있어(평균 298자) 줄이면 판정 근거가 깎인다. 반면 절감은 전체 약 13%
+    (추정)에 그친다. PDF 148쪽의 "raw_findings: 압축 금지, 누적만"과도 맞지 않는다.
 - 상관 : `run_id` 하나가 SqliteSaver `thread_id`, LangSmith 루트 run id·metadata, 결정 로그 파일명을
   모두 잇는다. 콘솔 첫 줄에 `run_id`가 출력된다.
 - 재개/복구 : `node_status`(pending/running/done/failed/excluded) + `attempts` + `errors`가 재개에
   필요한 최소 상태. 체크포인트는 `outputs/checkpoints.sqlite`에 저장되고 `python app.py --resume <run_id>`로
-  마지막 superstep부터 재개 (중단 시 `running`이던 노드는 다시 실행).
+  마지막 superstep부터 재개 (중단 시 `running`이던 노드는 다시 실행). 설계 근거는 강의자료 PDF 132쪽(Fan-out
+  설계 고려사항 — 부분 실패 처리)의 "Checkpointer 필수: 성공한 노드 결과는 내부적으로 저장되므로 그래프 재개 시
+  실패한 브랜치만 재시도". 정상 종료한 run은 ③ 정리로 중간 체크포인트가 없어 재개 대상이 아니다.
   - 검증(2026-10-07) : ① 관점 4개 병렬 평가 중 Ctrl+C → `--resume`로 이어서 보고서·품질 PASS까지 완료(10스텝).
     병렬 스레드가 끝날 때까지 기다린 뒤 종료돼 Ctrl+C 후 프로세스가 내려가기까지 8초 넘게 걸리고(정확한 시간은 미측정),
     그때까지 끝난 노드의 결과는 체크포인트에 저장돼 재개 시 step 3(synthesis)부터 이어진다. ② 같은 구간에서 SIGKILL로
@@ -138,7 +152,9 @@ Supervisor 자체는 LLM이 아닌 **결정론적 정책**이다. LLM 판정이 
 - 동시 처리 : Supervisor가 관점 Agent를 한 superstep에 병렬 디스패치하므로 동시에 쓰는 필드에 리듀서
   적용 — `node_status`/`errors`는 key 단위 dict 병합(`merge_dict`), `evidence_items`/`references`는
   중복 제거 리스트 병합. 관점 결과는 Agent마다 키가 달라 충돌 없음. `attempts`/`rework_counts`는
-  Supervisor만 쓰는 단일 writer 필드.
+  Supervisor만 쓰는 단일 writer 필드. `max_concurrency`는 설정하지 않았다. 강의자료 PDF 132쪽은 Rate limit 대비로
+  동시 태스크 수 제한을 권하지만, 병렬 노드가 관점 4개로 고정이라 제한값이 동작을 바꾸지 않고 노드 내부의 기술별
+  `ThreadPoolExecutor`는 이 설정의 대상이 아니다. 2026-10-07 실행 4회에서 OpenAI/Tavily rate limit 오류는 로그에 없었다.
 - 종료 보장 : ① Supervisor 스텝 상한 `MAX_SUPERVISOR_STEPS=30`(초과 시 보고서만 생성 후 END),
   ② 실패 재시도 `MAX_FAILURE_RETRIES=1`, ③ Agent별 재작업 `MAX_REWORK_PER_AGENT=2`, ④ 검증 재작업 라운드
   `MAX_FAITHFULNESS_ROUNDS=2`(검증 루프가 스텝 예산을 소진해 품질 평가 루프에 못 가는 일 방지), ⑤ 보고서
@@ -203,7 +219,8 @@ Supervisor 정책 우선순위 (`graph/supervisor.py` `decide`):
 │   ├── state.py                 # State 스키마 (제어/페이로드 분리, 리듀서)
 │   ├── supervisor.py            # Supervisor 정책·근거 충분도 게이트·라우팅
 │   ├── workflow.py              # 그래프 조립 (hub-and-spoke, 실패 래퍼)
-│   └── observability.py         # 외부 결정 로그(JSONL)·LangSmith 결정 span/feedback·결정 이력 부록
+│   ├── observability.py         # 외부 결정 로그(JSONL)·LangSmith 결정 span/feedback·결정 이력 부록
+│   └── checkpoint_maintenance.py # 정상 종료 run의 체크포인트 정리 (마지막 체크포인트만 유지)
 ├── agents/                   # ── 하위 Agent ──
 │   ├── base.py                  # LLM 호출·외부 검색 tool-calling·인용 카탈로그
 │   ├── schemas.py               # 구조화 출력 스키마 (평가·검증·품질 verdict)
@@ -233,6 +250,7 @@ uv run python -m rag.ingest                # FAISS 색인 + BM25 청크 생성
 
 uv run python app.py                       # 실행 (run_id 자동 발급, 콘솔 첫 줄에 출력)
 uv run python app.py --resume <run_id>     # 중단된 실행을 체크포인트부터 재개
+uv run python app.py --keep-checkpoints   # 정상 종료 후에도 중간 체크포인트 유지 (기본은 마지막 것만 남기고 정리)
 ```
 콘솔에 Supervisor 결정이 `[supervisor] step N | action -> targets | reason` 형식으로 실시간 출력되고,
 종료 시 결정 이력·라우팅/재작업 횟수·품질 판정이 요약된다. LangSmith 프로젝트(`LANGSMITH_PROJECT`)에서
@@ -262,6 +280,8 @@ uv run python -m unittest discover -s tests -v   # API 호출 없음
 - 최윤영 : 보고서 품질 평가 노드 설계 — Hybrid(규칙 AND LLM Judge) 4항목(Groundedness·중립성·
   편향 통제·관점 커버리지) 판정 기준과 Judge 프롬프트, 미달 원인별 재작업/재작성 분기 기준
 - 이승준 : 동시 처리·재개/복구 — 병렬 디스패치용 리듀서(`merge_dict`, 근거 중복 제거), 하위 Agent
-  실패 래퍼(Fall-back), SQLite 체크포인트 및 `--resume` 재개, 종료 보장 예산 설정
+  실패 래퍼(Fall-back), SQLite 체크포인트 및 `--resume` 재개, 종료 보장 예산 설정. 재개 실측 검증(관점 병렬
+  평가 중 Ctrl+C·SIGKILL 후 `--resume`로 끝까지 완료)과 체크포인트 크기의 필드별 측정·원인 분석(스냅샷 횟수),
+  정상 종료 run의 체크포인트 정리(`graph/checkpoint_maintenance.py`, 기본 ON·`--keep-checkpoints`)와 테스트
 - 박인애 : 관측성·보고서 출력 — 외부 결정 로그(JSONL)·LangSmith 연동(run_id 상관 키), `[R#]` 인용
   카탈로그와 REFERENCE 연결, 10쪽 분량 검사(PDF 쪽수 측정), 제출용 Agent-Output PDF

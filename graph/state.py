@@ -11,6 +11,9 @@
     (Document 전체 본문)는 State에 두지 않는다(이전 RAG 버전의 retrieved_documents 제거).
     근거는 300자 인용으로 잘린 evidence_items만 두고, 리듀서가 매 병합마다 중복을 제거한다.
     보고서 이력·결정 로그·PDF는 outputs/ 파일로만 남긴다.
+    다만 SqliteSaver는 superstep마다 State 전체를 새로 저장하므로 용량은 State 한 건이 아니라 스냅샷 횟수에
+    비례한다. 실행 중 상한은 재작업·스텝 예산이고, 정상 종료한 run은 마지막 체크포인트만 남기고 정리한다
+    (graph/checkpoint_maintenance.py). 인용문 길이 축소는 근거 원본을 깎아 채택하지 않았다(README 참고).
   - 상관 : run_id 하나가 LangGraph thread_id(체크포인트), LangSmith 루트 run id/metadata,
     외부 결정 로그 파일명, 보고서 파일명을 모두 잇는 키다.
   - 재개/복구 : node_status/attempts/errors가 "어디까지 끝났고 무엇이 실패했는지"를 담는다.

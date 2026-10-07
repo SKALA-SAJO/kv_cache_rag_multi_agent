@@ -8,6 +8,7 @@
     python app.py                         # 새 실행 (run_id 자동 발급)
     python app.py --question "다른 평가 질문"
     python app.py --resume <run_id>       # 중단된 실행을 마지막 체크포인트부터 재개
+    python app.py --keep-checkpoints      # 정상 종료 후에도 중간 체크포인트를 지우지 않음 (기본은 정리)
 """
 
 import argparse
@@ -33,6 +34,7 @@ from graph.observability import (  # noqa: E402
     summarize_routing,
     trace_path,
 )
+from graph.checkpoint_maintenance import is_run_finished, prune_checkpoints  # noqa: E402
 from graph.workflow import build_graph  # noqa: E402
 from rag.external_search import register as register_external_search  # noqa: E402
 from scripts.report_to_pdf import DEFAULT_CAMPUS, DEFAULT_CLASS, DEFAULT_TEAM_NAMES, OUTPUTS_DIR  # noqa: E402
@@ -62,6 +64,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="KV Cache 기술 다관점 평가 (Supervisor 패턴)")
     parser.add_argument("--question", default=DEFAULT_QUESTION, help="평가 질문")
     parser.add_argument("--resume", metavar="RUN_ID", help="중단된 실행을 체크포인트에서 재개")
+    parser.add_argument(
+        "--keep-checkpoints",
+        action="store_true",
+        help="정상 종료 후에도 중간 체크포인트를 지우지 않는다 (기본: 마지막 체크포인트만 남기고 정리)",
+    )
     args = parser.parse_args()
 
     if not settings.vectorstore_path.exists():
@@ -95,6 +102,7 @@ def main() -> None:
         workflow = build_graph(checkpointer=checkpointer)
         graph_input = None if args.resume else {"research_question": args.question, "run_id": run_id}
         result = workflow.invoke(graph_input, config=config)
+        finished = is_run_finished(workflow, config)  # 체크포인터 연결이 열려 있을 때만 상태를 읽을 수 있다
     total_elapsed = time.perf_counter() - total_start
 
     if not result.get("final_report"):
@@ -128,6 +136,15 @@ def main() -> None:
         print(f"[app] 제출용 PDF: {pdf_path} ({pages}쪽{flag})")
     except Exception as exc:  # noqa: BLE001
         print(f"[app] PDF 변환 실패(보고서 .md는 저장됨): {exc}", file=sys.stderr)
+
+    # 정상 종료한 run은 마지막 체크포인트만 남긴다(Ctrl+C·예외로 끊긴 run은 여기 오지 않아 재개 가능).
+    # 산출물(.md/PDF)을 모두 만든 뒤에 하고, 실패해도 실행 결과에는 영향이 없다.
+    if finished and not args.keep_checkpoints:
+        try:
+            before, after = prune_checkpoints(CHECKPOINT_DB, run_id)
+            print(f"[app] 체크포인트 정리: {before / 1e6:.1f}MB → {after / 1e6:.1f}MB (--keep-checkpoints로 유지 가능)")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[app] 체크포인트 정리 실패(실행 결과에는 영향 없음): {exc}", file=sys.stderr)
 
 
 if __name__ == "__main__":
