@@ -319,14 +319,16 @@ uv run python -m unittest discover -s tests -v   # API 호출 없음
   중복 실행 방지 검증과 보고서 저장 테스트의 검색 의존성 격리
   및 깨끗한 클론 재현성 점검(Usage·환경 설정·기본 경로), app 체크포인트 정리 로그 통합 테스트
   및 PDF 변환에 전달되는 최종 Markdown의 SUMMARY·REFERENCE 챕터 순서 검증
-- 서지원 : 근거 충분도 게이트 기준 설계(근거 수·출처 다양성·정보 부족 판정), 기술 조사·기술 성숙도
-  Agent State 경량화(원문 청크 `retrieved_documents` 제거로 체크포인트 비용 절감),
-  LangGraph 노드 동시 실행 상한 설정(`max_concurrency=4`) 및 비용 제어 근거 문서화
-- 최윤영 : 보고서 품질 평가 노드 설계 — Hybrid(규칙 AND LLM Judge) 4항목(Groundedness·중립성·
-  편향 통제·관점 커버리지) 판정 기준과 Judge 프롬프트, 미달 원인별 재작업/재작성 분기 기준
+- 서지원 : 근거 충분도 게이트 기준 검토 — 기술별(관점 × 기술) 판정 기준에 맞춘 이해관계자 관점 기준 실측
+  검토와 테스트, 시장성 관점의 외부 검색(URL) 출처 최소 기준 추가, LangGraph 노드 동시 실행 상한 설정
+  (`max_concurrency=4`) 및 비용 제어 근거 문서화
+- 최윤영 : 품질 평가 중립성 규칙 정교화 — 조건부 비교 허용, 강한 우열 표현(우월·압도적)과 추천 표현의
+  부정어 예외 축소, 경계 사례 회귀 테스트, Judge 프롬프트의 리스크 관리성 권고 허용 기준 보정
 - 이승준 : 동시 처리·재개/복구 — Agent 내부 기술별 평가의 병렬화(`ThreadPoolExecutor`), 재개 실측 검증(관점 병렬
   평가 중 Ctrl+C·SIGKILL 후 `--resume`로 끝까지 완료), 체크포인트 크기의 필드별 측정·원인 분석(스냅샷 횟수)과 지속성
   비용 정리, 정상 종료 run의 체크포인트 정리(`graph/checkpoint_maintenance.py`, 기본 ON·`--keep-checkpoints`)와 테스트,
   State 레이어드화(`PayloadState`/`ControlState`)와 테스트(`tests/test_state_layers.py`)
-- 박인애 : 관측성·보고서 출력 — 외부 결정 로그(JSONL)·LangSmith 연동(run_id 상관 키), `[R#]` 인용
-  카탈로그와 REFERENCE 연결, 10쪽 분량 검사(PDF 쪽수 측정), 제출용 Agent-Output PDF
+- 박인애 : 관측성·보고서 출력 — LangSmith 트레이스 중첩 복구, Supervisor 결정 span·태그·실행 요약 feedback,
+  보고서 결정 이력 부록(REFERENCE 앞 배치), 결과 키 타임스탬프(`error_times`, `last_decision.ts`), 충분도
+  게이트 관점 × 기술 단위화, Judge 장애 시 미달 처리(fail-closed), 보고서 인용 자체 점검·1회 보정과 굵은
+  인용 정규화, TRL 공개 정보 기반 추정 고지 보장, 단위 테스트 트레이싱 차단, 최종 실행·제출물
