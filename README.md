@@ -277,7 +277,8 @@ uv run python -m unittest discover -s tests -v   # API 호출 없음
   이전 품질 verdict의 오인 방지를 API 없는 회귀 테스트로 검증. 재개 시 완료된 병렬 관점의
   중복 실행 방지 검증과 보고서 저장 테스트의 검색 의존성 격리
 - 서지원 : 근거 충분도 게이트 기준 설계(근거 수·출처 다양성·정보 부족 판정), 기술 조사·기술 성숙도
-  Agent State 경량화(원문 청크 `retrieved_documents` 제거로 체크포인트 비용 절감)
+  Agent State 경량화(원문 청크 `retrieved_documents` 제거로 체크포인트 비용 절감),
+  LangGraph 노드 동시 실행 상한 설정(`max_concurrency=4`) 및 비용 제어 근거 문서화
 - 최윤영 : 보고서 품질 평가 노드 설계 — Hybrid(규칙 AND LLM Judge) 4항목(Groundedness·중립성·
   편향 통제·관점 커버리지) 판정 기준과 Judge 프롬프트, 미달 원인별 재작업/재작성 분기 기준
 - 이승준 : 동시 처리·재개/복구 — 병렬 디스패치용 리듀서(`merge_dict`, 근거 중복 제거), 하위 Agent
