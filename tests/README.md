@@ -6,7 +6,7 @@
 uv run python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-검사 대상은 State 리듀서, Graph 분기, 코퍼스 계획, 500/50 토큰 청킹, 표·그림 캡션
+검사 대상은 State 리듀서, Supervisor 라우팅 정책·그래프 동적 실행(재작업·Fall-back·종료 보장), 품질 평가 규칙, 코퍼스 계획, 500/50 토큰 청킹, 표·그림 캡션
 분리, Retriever 필터, 외부 검색 tool-calling 결과 변환, 보고서 SUMMARY/REFERENCE 계약,
 프로젝트 구조다.
 

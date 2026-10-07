@@ -29,6 +29,15 @@ class ReportContractTest(unittest.TestCase):
         self.assertIn("최종 승자", report_writer.SYSTEM_PROMPT)
         self.assertIn("정보 부족", report_writer.SYSTEM_PROMPT)
 
+    def test_clean_report_strips_fake_citations_and_reference_notes(self) -> None:
+        cleaned = report_writer.clean_report(
+            "본문 [R1] 근거 [orchestration].\n\n## REFERENCE\n- [R1] A (2024). B. [원문: a.pdf]\n\n(참고) 메타"
+        )
+        self.assertIn("[R1]", cleaned)
+        self.assertNotIn("[orchestration]", cleaned)
+        self.assertNotIn("원문:", cleaned)
+        self.assertNotIn("(참고)", cleaned)
+
     def test_report_is_saved_as_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             with patch("agents.report_writer.get_llm", return_value=_FakeLLM()):
