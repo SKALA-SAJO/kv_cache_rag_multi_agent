@@ -241,10 +241,22 @@ Supervisor 정책 우선순위 (`graph/supervisor.py` `decide`):
 
 
 ## Usage
-```bash
-uv sync                                    # 의존성 설치 (Python 3.11, uv.lock 기준)
-cp .env.example .env                       # OPENAI_API_KEY, TAVILY_API_KEY, LANGSMITH_API_KEY 입력
+Python 3.11 이상과 `uv`가 필요하다. 처음 재현할 때는 과제 코드가 있는 `agent/supervisor` 브랜치를
+지정한다. 기본 테스트와 도움말 확인에는 API 키, 데이터 다운로드, 색인 구축이 필요하지 않다.
 
+```bash
+git clone --branch agent/supervisor --single-branch https://github.com/SKALA-SAJO/kv_cache_rag_multi_agent.git
+cd kv_cache_rag_multi_agent
+uv sync                                    # uv.lock 기준 의존성 설치
+cp .env.example .env                       # 기본 테스트에서는 API 키를 비워 둬도 됨
+uv run python -m unittest discover -s tests -v   # 기본 테스트: 실제 API 호출 없음
+uv run python app.py --help                # 데이터·색인 없이 명령 옵션 확인
+```
+
+실제 보고서 생성 전에는 `.env`의 `OPENAI_API_KEY`, `TAVILY_API_KEY`를 입력한다. LangSmith는
+선택 사항이며, 트레이스를 남기려면 `LANGSMITH_API_KEY`와 계정 리전에 맞는 엔드포인트를 설정한다.
+
+```bash
 uv run python -m scripts.download_papers   # RAG 코퍼스 다운로드
 uv run python -m rag.ingest                # FAISS 색인 + BM25 청크 생성
 
@@ -252,6 +264,11 @@ uv run python app.py                       # 실행 (run_id 자동 발급, 콘�
 uv run python app.py --resume <run_id>     # 중단된 실행을 체크포인트부터 재개
 uv run python app.py --keep-checkpoints   # 정상 종료 후에도 중간 체크포인트 유지 (기본은 마지막 것만 남기고 정리)
 ```
+기본 경로는 저장소 기준 `data/raw/`(원문), `data/processed/chunks.jsonl`(청크),
+`vectorstore/index.faiss`·`index.pkl`(검색 색인), `outputs/`(보고서·체크포인트)다.
+이 산출물들은 Git에 포함되지 않아 새 클론에서 실제 실행하려면 다운로드와 색인 구축이 필요하다.
+다운로드 스크립트와 PDF·체크포인트 저장 경로는 기본 경로를 사용하므로 재현 시 `.env.example`의
+경로 설정을 그대로 유지한다.
 콘솔에 Supervisor 결정이 `[supervisor] step N | action -> targets | reason` 형식으로 실시간 출력되고,
 종료 시 결정 이력·라우팅/재작업 횟수·품질 판정이 요약된다. LangSmith 프로젝트(`LANGSMITH_PROJECT`)에서
 `kv-cache-supervisor` 트레이스를 열면 supervisor ↔ 하위 Agent 왕복과 재작업 경로를 확인할 수 있다
@@ -261,6 +278,8 @@ uv run python app.py --keep-checkpoints   # 정상 종료 후에도 중간 체�
 ```bash
 uv run python -m unittest discover -s tests -v   # API 호출 없음
 ```
+실제 API 통합 테스트는 `RUN_LIVE_TESTS=1 uv run python -m unittest tests.test_integration_live -v`로
+명시적으로 활성화한다(키·데이터·색인 필요, 비용 발생 가능). 기본 테스트에는 이 변수를 설정하지 않는다.
 `tests/test_state_workflow.py`는 하위 Agent를 대역으로 바꿔 실제 그래프를 돌려 충분도 재작업·실패
 재시도·품질 미달 재작성·무한 루프 방지를 검증한다. Retrieval 지표 재측정:
 `uv run python -m tests.evaluate_retrieval --dataset heldout`
@@ -275,6 +294,7 @@ uv run python -m unittest discover -s tests -v   # API 호출 없음
   `next_nodes == []` 및 최종 품질 노드 완료 검증을 추가. `RUN_LIVE_TESTS` 미설정·`0`·`1` 실행 조건과
   이전 품질 verdict의 오인 방지를 API 없는 회귀 테스트로 검증. 재개 시 완료된 병렬 관점의
   중복 실행 방지 검증과 보고서 저장 테스트의 검색 의존성 격리
+  및 깨끗한 클론 재현성 점검(Usage·환경 설정·기본 경로), app 체크포인트 정리 로그 통합 테스트
 - 서지원 : 근거 충분도 게이트 기준 설계(근거 수·출처 다양성·정보 부족 판정), 기술 조사·기술 성숙도
   Agent State 경량화(원문 청크 `retrieved_documents` 제거로 체크포인트 비용 절감)
 - 최윤영 : 보고서 품질 평가 노드 설계 — Hybrid(규칙 AND LLM Judge) 4항목(Groundedness·중립성·
