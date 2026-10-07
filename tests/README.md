@@ -15,6 +15,10 @@ uv run python -m unittest discover -s tests -p "test_*.py" -v
 `invoke(None, ...)`를 호출하여 보고서·품질 평가·종료까지 재개되는지, 이미 완료한 기술
 조사를 반복하지 않는지, 다른 thread에 상태가 섞이지 않는지 확인한다. 실제 API를 호출하지 않는다.
 
+`test_live_test_gate.py`는 라이브 테스트 모듈을 격리해 로드하고, `RUN_LIVE_TESTS` 미설정·`0`이면
+생략되고 `1`이면 실행되는지 unittest 실행 결과로 확인한다. 테스트 본문은 대역으로 교체하므로
+활성화 조건 검증에서도 실제 API를 호출하지 않으며, 환경 변수와 기존 discovery 모듈은 유지한다.
+
 ## 실제 API 통합 테스트 (비용 발생 가능)
 
 `.env`에 `OPENAI_API_KEY`, `TAVILY_API_KEY`가 설정되어 있고 RAG 색인이 만들어진 경우에만
