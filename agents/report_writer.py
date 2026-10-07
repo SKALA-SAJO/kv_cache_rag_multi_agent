@@ -87,7 +87,7 @@ GRAPH_DESIGN_NOTE = (
     "재작업 예산)를 읽어 결정론적 정책으로 next_nodes를 정하고, add_conditional_edges가 그 값으로 "
     "분기한다(실행 순서 하드코딩 없음). "
     "State 설계 - 작업 페이로드(technical_evidence, 4관점 평가, evidence_items/references, synthesis, "
-    "faithfulness_check, final_report, quality_verdict)와 제어 메타데이터(run_id, step_count/max_steps, "
+    "faithfulness_check, report_path(보고서 URI), quality_verdict)와 제어 메타데이터(run_id, step_count/max_steps, "
     "next_nodes, last_decision, node_status, attempts, errors, rework_counts, retry_hints, sufficiency, "
     "report_revisions, quality_feedback)를 분리. 결정 로그 전문은 State 밖 JSONL과 LangSmith로 보내고 "
     "run_id로 연결. 병렬 디스패치로 동시에 쓰이는 node_status/errors/evidence_items/references는 리듀서로 병합. "
@@ -206,7 +206,7 @@ def run(state: GraphState) -> dict:
                 "node": "report_writer",
                 "name": "보고서 생성 Agent",
                 "rag": False,
-                "output": "final_report",
+                "output": "report_path (보고서 파일 URI)",
             },
             {
                 "node": "quality_evaluation",
@@ -271,8 +271,15 @@ def run(state: GraphState) -> dict:
     settings.outputs_path.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     revision = state.get("report_revisions", 0)
-    report_path = settings.outputs_path / f"report_{timestamp}_rev{revision}.md"
+    # 재작성·재작업마다 새 파일을 가리키도록 run_id 접두어를 붙인다(같은 초·같은 rev여도 run별로 구분).
+    run_tag = (state.get("run_id") or "run")[:8]
+    report_path = settings.outputs_path / f"report_{timestamp}_{run_tag}_rev{revision}.md"
+    suffix = 1
+    while report_path.exists():  # 같은 초에 다시 쓰는 경우에도 이전 파일을 덮어쓰지 않는다
+        report_path = settings.outputs_path / f"report_{timestamp}_{run_tag}_rev{revision}_{suffix}.md"
+        suffix += 1
     report_path.write_text(report_markdown, encoding="utf-8")
     print(f"[report_writer] 보고서 저장: {report_path}")
 
-    return {"final_report": report_markdown, "report_path": str(report_path)}
+    # 본문은 파일로만 남기고 State에는 URI(경로)만 둔다.
+    return {"report_path": str(report_path)}

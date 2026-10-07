@@ -45,8 +45,9 @@ class LiveIntegrationTest(unittest.TestCase):
 
         self.assertTrue(external, "실제 외부 검색 근거가 저장되어야 합니다.")
         self.assertTrue(all(item.get("source_url") for item in external))
-        self.assertIn("SUMMARY", result["final_report"])
-        self.assertIn("REFERENCE", result["final_report"])
+        report = Path(result["report_path"]).read_text(encoding="utf-8")  # State에는 URI만 있음
+        self.assertIn("SUMMARY", report)
+        self.assertIn("REFERENCE", report)
         self.assertIn("quality_verdict", result, "보고서 생성 후 품질 평가가 수행되어야 합니다.")
         self.assertIsInstance(result["quality_verdict"], dict)
         self.assertIsInstance(result["quality_verdict"].get("passed"), bool)

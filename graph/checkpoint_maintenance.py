@@ -21,12 +21,12 @@ from typing import Any
 
 
 def is_run_finished(graph: Any, config: dict) -> bool:
-    """정상 종료 판정: 더 실행할 노드가 없고(next == ()) 최종 보고서가 State에 있다.
+    """정상 종료 판정: 더 실행할 노드가 없고(next == ()) 최종 보고서 URI(report_path)가 State에 있다.
 
     체크포인터 연결이 열려 있는 동안 호출해야 한다(상태를 체크포인트에서 읽는다).
     """
     snapshot = graph.get_state(config)
-    return not snapshot.next and bool(snapshot.values.get("final_report"))
+    return not snapshot.next and bool(snapshot.values.get("report_path"))
 
 
 def _db_bytes(db_path: Path) -> int:

@@ -23,7 +23,7 @@ from typing import Any
 
 from pypdf import PdfReader
 
-from agents.base import build_reference_catalog, load_prompt, structured_call
+from agents.base import build_reference_catalog, load_prompt, load_report, structured_call
 from agents.schemas import QualityJudgement
 from config import settings
 from graph.state import GraphState
@@ -272,7 +272,7 @@ def combine(rules: dict[str, dict], judgement: QualityJudgement | None) -> dict[
 
 
 def run(state: GraphState) -> dict:
-    report = state.get("final_report", "")
+    report = load_report(state)
     catalog = build_reference_catalog(state.get("references", []))
     rules = {
         "groundedness": rule_groundedness(report, catalog),

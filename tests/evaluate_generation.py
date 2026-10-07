@@ -29,7 +29,7 @@ load_dotenv(ROOT / ".env", override=True)
 if _tracing is not None:
     os.environ["LANGSMITH_TRACING"] = _tracing
 
-from agents.base import load_prompt, structured_call  # noqa: E402
+from agents.base import load_prompt, load_report, structured_call  # noqa: E402
 from config import settings  # noqa: E402
 
 CASES_PATH = ROOT / "data" / "eval" / "generation_cases.json"
@@ -100,7 +100,7 @@ def judge_answer_relevance(case: GenerationCase, report: str) -> AnswerRelevance
 def evaluate_case(case: GenerationCase, workflow: Any) -> dict[str, Any]:
     """하나의 Golden Rubric 질문에 전체 Graph를 실행하고 두 Generation 지표를 산출한다."""
     state = workflow.invoke({"research_question": case.question})
-    relevance = judge_answer_relevance(case, state.get("final_report", ""))
+    relevance = judge_answer_relevance(case, load_report(state))
     return {
         "id": case.id,
         "question": case.question,

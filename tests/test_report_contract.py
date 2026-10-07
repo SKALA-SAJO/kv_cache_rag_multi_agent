@@ -64,9 +64,30 @@ class ReportContractTest(unittest.TestCase):
 
             reports = list(Path(temporary_dir).glob("report_*.md"))
             self.assertEqual(len(reports), 1)
-            self.assertTrue(result["final_report"].startswith("SUMMARY"))
-            self.assertIn("REFERENCE", result["final_report"])
+            # State에는 본문이 아니라 보고서 파일 URI만 남는다
+            self.assertNotIn("final_report", result)
+            self.assertEqual(Path(result["report_path"]), reports[0])
+            body = reports[0].read_text(encoding="utf-8")
+            self.assertTrue(body.startswith("SUMMARY"))
+            self.assertIn("REFERENCE", body)
 
+
+    def test_rewrite_points_to_new_file_and_load_report_reads_latest(self) -> None:
+        from agents.base import load_report
+
+        state = {"research_question": "t", "selected_technologies": {}, "references": [], "run_id": "abcd1234-x"}
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            with patch("agents.report_writer.get_llm", return_value=_FakeLLM()), \
+                    patch("agents.report_writer.retrieve", return_value=[]), \
+                    patch.object(report_writer.settings, "outputs_dir", temporary_dir):
+                first = report_writer.run(state)["report_path"]
+                second = report_writer.run(state)["report_path"]  # 같은 초·같은 rev로 다시 작성
+            self.assertNotEqual(first, second)  # 이전 파일을 덮어쓰지 않고 새 파일을 가리킴
+            self.assertTrue(Path(first).exists() and Path(second).exists())
+            Path(first).write_text("OLD", encoding="utf-8")
+            self.assertTrue(load_report({"report_path": second}).startswith("SUMMARY"))  # 최신 경로만 읽음
+        self.assertEqual(load_report({}), "")
+        self.assertEqual(load_report({"report_path": "/nonexistent/report.md"}), "")
 
 if __name__ == "__main__":
     unittest.main()

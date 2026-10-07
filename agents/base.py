@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, TypeVar
 
 from langchain_core.documents import Document
@@ -343,3 +344,18 @@ def build_reference_catalog(references: list[dict]) -> list[dict]:
         if page is not None and page not in entry["pages"]:
             entry["pages"].append(page)
     return list(catalog.values())
+
+
+def load_report(state: dict) -> str:
+    """State의 report_path(URI)가 가리키는 보고서 본문을 읽는다. 없으면 빈 문자열.
+
+    보고서 본문은 State에 두지 않는다(체크포인트마다 반복 저장·트레이스 출력 비대화 방지).
+    State에는 경로만 두고, 본문이 필요한 곳(품질 평가·최종본·콘솔 출력)은 이 함수로 읽는다.
+    """
+    path = state.get("report_path")
+    if not path:
+        return ""
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return ""

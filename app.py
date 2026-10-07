@@ -25,6 +25,7 @@ load_dotenv(override=True)
 from langgraph.checkpoint.sqlite import SqliteSaver  # noqa: E402
 from pypdf import PdfReader  # noqa: E402
 
+from agents.base import load_report  # noqa: E402
 from config import settings  # noqa: E402
 from graph.observability import (  # noqa: E402
     count_reworks,
@@ -105,13 +106,14 @@ def main() -> None:
         finished = is_run_finished(workflow, config)  # 체크포인터 연결이 열려 있을 때만 상태를 읽을 수 있다
     total_elapsed = time.perf_counter() - total_start
 
-    if not result.get("final_report"):
+    report_text = load_report(result)
+    if not report_text:
         print("[app] 보고서가 생성되지 않았습니다. 결정 로그를 확인하세요.", file=sys.stderr)
         _print_orchestration_summary(result)
         sys.exit(2)
 
     print("\n=== 최종 평가 보고서 ===\n")
-    print(result["final_report"])
+    print(report_text)
     print_timing_summary()
     _print_orchestration_summary(result)
     print(f"\n[timing] 전체 실행 시간: {total_elapsed:.1f}초")
@@ -121,7 +123,7 @@ def main() -> None:
     report_path = Path(result["report_path"])
     final_path = report_path.with_name(f"{report_path.stem}_final.md")
     final_path.write_text(
-        result["final_report"].rstrip() + "\n\n" + render_decision_appendix(result["run_id"]), encoding="utf-8"
+        report_text.rstrip() + "\n\n" + render_decision_appendix(result["run_id"]), encoding="utf-8"
     )
     print(f"[app] 최종 보고서(결정 이력 부록 포함): {final_path}")
     if not args.resume:  # 재개 실행은 루트 run id가 run_id와 달라 기록 대상이 없다

@@ -230,7 +230,7 @@ def _policy(d: _Decision, state: GraphState, step: int) -> tuple[list[str], str,
     if step > max_steps:
         if d.status_of(REPORT_NODE) in _NEEDS_RUN:
             return d.dispatch([REPORT_NODE], "force_report", f"스텝 상한({max_steps}) 도달 — 보고서 생성 후 품질 평가 1회")
-        if (state.get("final_report") and d.status_of(REPORT_NODE) == "done"
+        if (state.get("report_path") and d.status_of(REPORT_NODE) == "done"
                 and d.status_of(QUALITY_NODE) in _NEEDS_RUN):
             return d.dispatch([QUALITY_NODE], "force_quality", f"스텝 상한({max_steps}) 도달 — 종료 전 품질 평가 1회(필수 게이트)")
         verdict = state.get("quality_verdict") or {}
@@ -322,7 +322,7 @@ def _policy(d: _Decision, state: GraphState, step: int) -> tuple[list[str], str,
         if status == "failed":
             if d.resolve_failure(node):
                 return d.dispatch([node], "retry_failed", f"{node} 실패 재시도")
-            if node == REPORT_NODE or not state.get("final_report"):
+            if node == REPORT_NODE or not state.get("report_path"):
                 return [], END_ACTION, f"{node} 반복 실패로 제외 — 종료"
             d.updates["quality_verdict"] = {
                 "passed": False, "evaluated": False, "failed_criteria": ["quality_evaluation_unavailable"],
@@ -334,9 +334,9 @@ def _policy(d: _Decision, state: GraphState, step: int) -> tuple[list[str], str,
                 rev = state.get("report_revisions", 0)
                 if rev:
                     reason = f"품질 미달 피드백 반영 재작성 ({rev}회차)"
-                elif state.get("final_report") and state.get("quality_feedback"):
+                elif state.get("report_path") and state.get("quality_feedback"):
                     reason = "품질 미달 원인 관점 재작업 반영 — 보고서 재작성"
-                elif state.get("final_report"):
+                elif state.get("report_path"):
                     reason = "관점 재작업 결과 반영 — 보고서 재작성"
                 else:
                     reworks = state.get("rework_counts", {})

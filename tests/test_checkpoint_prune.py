@@ -72,7 +72,7 @@ class CheckpointPruneTest(unittest.TestCase):
         self.assertLess(after_bytes, before_bytes)
         after_values = _state_values(self.db, "run-a")
         self.assertEqual(after_values, before_values)  # 근거·보고서·verdict·제어 메타 모두 동일
-        self.assertEqual(after_values["final_report"], before_values["final_report"])
+        self.assertEqual(after_values["report_path"], before_values["report_path"])
 
     def test_prune_does_not_touch_other_threads_or_missing_thread(self) -> None:
         _run_to_end(self.db, "run-a")

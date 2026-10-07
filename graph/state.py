@@ -98,8 +98,7 @@ class GraphState(TypedDict, total=False):
 
     synthesis: dict[str, Any]
     faithfulness_check: dict[str, Any]  # claim-evidence 대조 verdict (구조화)
-    final_report: str
-    report_path: str
+    report_path: str  # 보고서 URI — 본문은 파일로만 두고 State에는 경로만 (재작성마다 새 파일)
     quality_verdict: dict[str, Any]  # 품질 평가 verdict (구조화, Hybrid)
 
     # ── 제어 메타데이터 (라우팅·종료·재개에 필요한 최소치) ─────────────────────────
