@@ -333,6 +333,21 @@ def _fake_runners(calls: list[str], fail_once: set[str]):
 
 
 class SupervisorGraphTest(unittest.TestCase):
+    def test_default_max_concurrency_completes_graph(self) -> None:
+        self.assertEqual(settings.max_concurrency, 4)
+        calls: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp, patch.object(settings, "outputs_dir", tmp), \
+                patch.dict(workflow.AGENT_RUNNERS, _fake_runners(calls, fail_once=set())):
+            result = workflow.build_graph().invoke(
+                {"research_question": "q", "run_id": "concurrency-four"},
+                config={"recursion_limit": settings.graph_recursion_limit,
+                        "max_concurrency": settings.max_concurrency},
+            )
+
+        self.assertTrue(set(PERSPECTIVE_NODES) <= set(calls))
+        self.assertEqual(result["node_status"]["quality_evaluation"], "done")
+        self.assertEqual(result["next_nodes"], [])
+
     def test_dynamic_run_with_rework_fallback_and_revision(self) -> None:
         calls: list[str] = []
         with tempfile.TemporaryDirectory() as tmp, patch.object(settings, "outputs_dir", tmp), \

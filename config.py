@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     # LangGraph 자체 recursion_limit (Supervisor 스텝 상한과 별개의 2차 가드).
     # 최악 = init 1 + Supervisor 33회(상한 30 + 보고서·품질 2 + 종료 1) + 하위 노드 32회 = 66 < 80.
     graph_recursion_limit: int = 80
+    # 한 superstep의 관점 노드 최대 4개에 맞춘 LangGraph 노드 실행 상한.
+    # 노드 내부의 기술별 ThreadPoolExecutor(각 2개)는 이 값으로 제한되지 않는다.
+    max_concurrency: int = 4
 
     # ── 보고서 품질 평가 (agents/quality_evaluation.py) ──
     max_report_pages: int = 10
