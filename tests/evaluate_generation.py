@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -21,7 +22,12 @@ ROOT = Path(__file__).resolve().parents[1]
 # app.py와 동일하게 .env를 명시적으로 우선 적용한다. 그렇지 않으면 이전 터미널 세션에서
 # export된 오래된 OPENAI_API_KEY가 pydantic-settings의 .env 값보다 우선해 Generation
 # 평가만 401 오류로 실패할 수 있다.
+# 단, LangSmith 트레이싱 설정은 덮어쓰지 않는다: tests 패키지가 끈 값을 .env의 true로 되살리면
+# 이 모듈을 import하는 단위 테스트 이후의 대역 그래프 실행이 실제 LangSmith 프로젝트로 올라간다.
+_tracing = os.environ.get("LANGSMITH_TRACING")
 load_dotenv(ROOT / ".env", override=True)
+if _tracing is not None:
+    os.environ["LANGSMITH_TRACING"] = _tracing
 
 from agents.base import load_prompt, structured_call  # noqa: E402
 from config import settings  # noqa: E402

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -86,6 +87,15 @@ class RunFeedbackTest(unittest.TestCase):
             obs.record_run_feedback("r", quality_passed=True)
         scores = {c.kwargs["key"]: c.kwargs["score"] for c in client.create_feedback.call_args_list}
         self.assertEqual(scores, {"supervisor_routes": 3, "supervisor_reworks": 1, "quality_passed": 1})
+
+
+class TestRunTracingTest(unittest.TestCase):
+    def test_unit_tests_never_send_traces_to_langsmith(self) -> None:
+        # .env(LANGSMITH_TRACING=true)를 override로 다시 읽는 모듈을 import해도 테스트 중 트레이싱은 꺼져 있다
+        import tests.evaluate_generation  # noqa: F401
+
+        self.assertEqual(os.environ.get("LANGSMITH_TRACING"), "false")
+        self.assertFalse(obs.tracing_is_enabled())
 
 
 if __name__ == "__main__":
