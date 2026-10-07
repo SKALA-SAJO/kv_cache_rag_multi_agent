@@ -17,12 +17,41 @@
   `add_conditional_edges`로 다음 노드를 고른다. 같은 코드라도 실행마다 경로가 달라진다 —
   예: 근거 부족 관점만 재작업 → 종합 재실행, 검증 실패 claim의 출처 Agent만 재작업, 품질 미달 시
   보고서 재작성, 실패 Agent 재시도/제외, 예산 소진 시 종료.
-- 실제 실행 예 (run `1f4c1962`, `outputs/traces/{run_id}.jsonl`) : Supervisor 라우팅 **29회**, 재작업 **6회**.
-  `collect_tech → collect_perspectives(4 병렬) → synthesize → verify → rework_unfaithful[tech_research]
-  → (4관점 재수집) → … → rework_unfaithful[market, trl] → … → rework_unfaithful[domain] → write_report
-  → evaluate_quality(FAIL: groundedness) → rework_quality[domain] → synthesize → verify → write_report
-  → evaluate_quality(PASS) → END`. 고정 파이프라인이었다면 9노드 1회 실행으로 끝났을 흐름이 State 판정에
-  따라 매번 다른 Agent 부분집합만 재실행됐다.
+- 최종 실제 실행 예 (2026-10-07, 기준 코드 `255d755`, run `82fdada4-3c9b-4190-be14-a31af85e5058`) :
+  LangSmith 루트 실행 **490.34초(약 8분 10초)**, Supervisor 라우팅 **8회**, 재작업 **1회**(전체 예산 4라운드).
+  `collect_tech → collect_perspectives(4 병렬) → rework_insufficient[domain_evaluation]
+  → synthesize → verify → write_report → evaluate_quality(PASS) → END`.
+  도메인 관점에서 두 기술 모두 출처 1종으로 충분도 기준(2종)에 미달해 이 관점만 재작업했고,
+  재작업 후 기술별 출처 2종을 확보했다. 검증 미통과 claim 1건은 보고서에 근거 부족으로 표시했다.
+  마지막 State의 `next_nodes=[]`, 품질 평가 `passed=true`, `failed_criteria=[]`를 확인했다.
+  결정 로그는 `outputs/traces/82fdada4-3c9b-4190-be14-a31af85e5058.jsonl`이다.
+  [LangSmith 캡처 1: 경로와 실행 요약](docs/tracing/tracing-1.png),
+  [캡처 2: 재작업 사유](docs/tracing/tracing-2.png),
+  [캡처 3: 정상 종료](docs/tracing/tracing-3.png)에서 같은 run을 확인할 수 있다.
+
+### 최종 산출물 점검 (위 run 기준)
+
+프로젝트 루트의 [Agent-Output_final.pdf](Agent-Output_final.pdf)는 실행으로 생성된 PDF의 원본 복사본이다.
+내용이나 레이아웃을 사후 수정하지 않았으며, PDF를 렌더링해 다음을 확인했다.
+
+| 확인 항목 | 결과 |
+|---|---|
+| 콘솔 품질 평가 | PASS (규칙 AND LLM Judge) |
+| 제출용 PDF 분량 | 결정 이력 부록 포함 **6쪽** — 10쪽 이하. 부록 추가 전 품질 평가 PDF는 5쪽 |
+| 제목 / SUMMARY / REFERENCE | 첫 쪽 맨 위 제목·SUMMARY, 마지막 절 REFERENCE(5~6쪽) |
+| SUMMARY 분량 | 첫 쪽의 1/2쪽 이내 |
+| 중립성 | 규칙·Judge 통과. 육안 검토에서도 무조건적인 우열 선언은 발견하지 않았으며, 5.1·5.2절은 각 기술이 유리한 조건을 설명 |
+| InfiniGen TRL | SUMMARY와 4.1절 모두 **6**, 공개 정보 기반 추정임을 표시 |
+| 4.4절 장문맥 벤치마크 인용 | LongBench **[R5]**, RULER **[R6]** 확인 |
+| 체크포인트 정리 | 콘솔 정리 로그 **1줄**, 약 **2.1MB → 0.2MB**, 해당 run 최종 체크포인트 **1개** |
+| 기본 테스트 | `RUN_LIVE_TESTS`를 설정하지 않고 전체 109개 실행: **108 통과 + 라이브 1 skip** |
+
+잔여 검토 사항: PASS와 별개로 LLM Judge는 2.2절의 93.3% 수치 인용 출처와 TRL 검증 상태의
+서술 일관성에 보완 의견 2건을 남겼다. 이는 `report_20261007_173840_82fdada4_rev0.quality.json`의
+`criteria.groundedness.llm.issues`에 기록되어 있으며, 본 실행에서 추가 재작업을 요구하지는 않았다.
+육안 검토에서는 6쪽 [R12]의 긴 Hugging Face URL이 오른쪽 여백을 넘는 레이아웃 문제도 발견했다.
+따라서 자동 품질 PASS를 모든 내용·레이아웃의 무결점 판정으로 해석하지 않는다.
+
 
 
 ## Selected Technologies
@@ -330,7 +359,8 @@ uv run python -m unittest discover -s tests -v   # API 호출 없음
   이전 품질 verdict의 오인 방지를 API 없는 회귀 테스트로 검증. 재개 시 완료된 병렬 관점의
   중복 실행 방지 검증과 보고서 저장 테스트의 검색 의존성 격리
   및 깨끗한 클론 재현성 점검(Usage·환경 설정·기본 경로), app 체크포인트 정리 로그 통합 테스트
-  및 PDF 변환에 전달되는 최종 Markdown의 SUMMARY·REFERENCE 챕터 순서 검증
+  및 PDF 변환에 전달되는 최종 Markdown의 SUMMARY·REFERENCE 챕터 순서 검증.
+  최종 실실행(run `82fdada4`)·PDF 육안 점검·LangSmith 캡처와 실행 예시 갱신
 - 서지원 : 근거 충분도 게이트 기준 검토 — 기술별(관점 × 기술) 판정 기준에 맞춘 이해관계자 관점 기준 실측
   검토와 테스트, 시장성 관점의 외부 검색(URL) 출처 최소 기준 추가, LangGraph 노드 동시 실행 상한 설정
   (`max_concurrency=4`) 및 비용 제어 근거 문서화
