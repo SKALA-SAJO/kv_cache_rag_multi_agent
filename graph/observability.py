@@ -3,6 +3,11 @@
 State에는 last_decision 1건만 남기고, 전체 이력은 여기서 outputs/traces/{run_id}.jsonl에
 append한다. 각 레코드는 {ts, run_id, step, node, event, ...}이며 run_id가 LangSmith 트레이스
 (루트 run id·metadata)와 체크포인트(thread_id)를 잇는 상관 키다.
+
+같은 결정은 두 곳에 더 남긴다:
+  - LangSmith : supervisor 노드 run에 action 태그·metadata, 그 아래 "decision: action → 대상" span
+    (트리 이름만 봐도 라우팅이 보이게), 종료 후 루트 run에 라우팅·재작업·품질 요약 feedback
+  - 보고서 부록 : 최종 보고서 끝에 결정 이력 표(render_decision_appendix)
 """
 
 from __future__ import annotations
@@ -10,10 +15,14 @@ from __future__ import annotations
 import json
 import threading
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+import langsmith as ls
+from langsmith.run_helpers import get_current_run_tree
+from langsmith.utils import tracing_is_enabled
 
 from config import settings
 
@@ -79,3 +88,104 @@ def summarize_decisions(run_id: str) -> list[dict[str, Any]]:
         if record.get("event") == "decision":
             decisions.append(record)
     return decisions
+
+
+def summarize_routing(run_id: str) -> list[dict[str, Any]]:
+    """step별 마지막 결정만 step 순으로 반환한다 (--resume으로 같은 step이 다시 기록돼도 중복 없음)."""
+    by_step = {d.get("step"): d for d in summarize_decisions(run_id)}
+    return [by_step[step] for step in sorted(by_step, key=lambda s: s or 0)]
+
+
+def count_reworks(decisions: list[dict[str, Any]]) -> int:
+    """재작업(rework_*)·보고서 재작성(revise_report) 결정 수."""
+    actions = Counter(d.get("action", "") for d in decisions)
+    return sum(v for k, v in actions.items() if k.startswith("rework") or k == "revise_report")
+
+
+# ── LangSmith ────────────────────────────────────────────────────────────────
+
+
+def trace_decision(decision: dict[str, Any], sufficiency: dict[str, Any] | None = None) -> None:
+    """Supervisor 결정을 LangSmith 트레이스에 남긴다 (트레이싱 비활성이면 아무것도 하지 않음).
+
+    supervisor 노드 run에는 필터용 태그(action:...)·metadata를 붙이고, 그 아래에 이름이
+    "decision: {action} → {대상}"인 span을 만들어 트레이스 트리만 펼쳐도 라우팅이 읽히게 한다.
+    관측성 실패가 그래프를 멈추면 안 되므로 예외는 삼킨다.
+    """
+    if not tracing_is_enabled():
+        return
+    action, targets = decision["action"], decision["targets"]
+    tags = [f"action:{action}"]
+    metadata = {"step": decision["step"], "action": action, "targets": targets, "reason": decision["reason"]}
+    try:
+        node_run = get_current_run_tree()
+        if node_run is not None:
+            node_run.add_tags(tags)
+            node_run.add_metadata(metadata)
+        with ls.trace(
+            name=f"decision: {action} → {', '.join(targets) or 'END'}",
+            run_type="chain",
+            inputs={"step": decision["step"], "sufficiency": sufficiency},
+            tags=tags,
+            metadata=metadata,
+        ) as span:
+            span.end(outputs={"targets": targets, "reason": decision["reason"]})
+    except Exception as exc:  # noqa: BLE001
+        print(f"[observability] LangSmith 결정 기록 실패(무시): {exc}")
+
+
+def record_run_feedback(run_id: str, quality_passed: bool | None) -> None:
+    """종료 후 LangSmith 루트 run에 라우팅·재작업·품질 요약을 feedback 점수로 남긴다.
+
+    끝난 run은 업데이트(PATCH)를 한 번만 받아 태그를 덧붙일 수 없으므로(409), 사후 기록용인
+    feedback을 쓴다. 프로젝트 목록에 열로 표시되고 supervisor_reworks > 0 등으로 필터할 수 있다.
+    """
+    if not tracing_is_enabled():
+        return
+    decisions = summarize_routing(run_id)
+    reworked = [f"{d['action']}→{','.join(d.get('targets') or [])}" for d in decisions
+                if d.get("action", "").startswith("rework") or d.get("action") == "revise_report"]
+    scores = [
+        ("supervisor_routes", len(decisions), None),
+        ("supervisor_reworks", len(reworked), "; ".join(reworked) or None),
+        ("quality_passed", 1 if quality_passed else 0, None),
+    ]
+    try:
+        from langchain_core.tracers.langchain import wait_for_all_tracers
+
+        wait_for_all_tracers()  # 루트 run이 먼저 적재돼야 feedback이 연결된다
+        client = ls.Client()
+        for key, score, comment in scores:
+            client.create_feedback(run_id, key=key, score=score, comment=comment)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[observability] LangSmith 실행 요약 기록 실패(무시): {exc}")
+
+
+# ── 보고서 부록 ──────────────────────────────────────────────────────────────
+
+
+def _cell(text: str, limit: int = 160) -> str:
+    text = " ".join(str(text).split()).replace("|", "\\|")
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def render_decision_appendix(run_id: str) -> str:
+    """외부 결정 로그로 보고서 부록(Supervisor 결정 이력 표)을 만든다. 로그가 없으면 빈 문자열."""
+    decisions = summarize_routing(run_id)
+    if not decisions:
+        return ""
+    lines = [
+        "## 부록. Supervisor 결정 이력",
+        "",
+        f"- run_id : `{run_id}` — LangSmith 루트 run id·체크포인트 thread_id·결정 로그"
+        f"(`outputs/traces/{run_id}.jsonl`)를 잇는 상관 키",
+        f"- 라우팅 {len(decisions)}회, 재작업/재작성 {count_reworks(decisions)}회 "
+        "(같은 코드라도 State에 따라 경로가 달라짐)",
+        "",
+        "| step | 결정 | 대상 | 사유 |",
+        "|---|---|---|---|",
+    ]
+    for d in decisions:
+        targets = ", ".join(d.get("targets") or []) or "END"
+        lines.append(f"| {d.get('step')} | {d.get('action')} | {targets} | {_cell(d.get('reason', ''))} |")
+    return "\n".join(lines) + "\n"
