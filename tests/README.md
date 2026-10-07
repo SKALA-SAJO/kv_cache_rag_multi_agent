@@ -17,6 +17,9 @@ uv run python -m unittest discover -s tests -p "test_*.py" -v
 병렬 관점의 완료 결과가 SQLite에 저장된 뒤 중단시키며, 재개 시 완료된 기술 성숙도·이해관계자
 관점은 반복하지 않고 시장성 관점은 충분도 정책에 따른 재작업만 수행하는지 호출 횟수로 검증한다.
 
+`test_checkpoint_prune.py`는 임시 SQLite DB에서 정상 종료한 run을 정리한 뒤 마지막 State가 그대로인지,
+다른 thread를 건드리지 않는지, Ctrl+C로 끊긴 run은 정리 대상이 아니며 재개가 끝까지 가는지 확인한다.
+
 보고서 저장 테스트는 LLM과 Retriever를 모두 대역으로 교체하여 로컬 데이터·색인·모델 없이 실행한다.
 
 `test_live_test_gate.py`는 라이브 테스트 모듈을 격리해 로드하고, `RUN_LIVE_TESTS` 미설정·`0`이면
