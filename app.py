@@ -48,6 +48,16 @@ DEFAULT_QUESTION = (
 CHECKPOINT_DB = OUTPUTS_DIR / "checkpoints.sqlite"
 
 
+def attach_before_reference(report: str, appendix: str) -> str:
+    """결정 이력 부록을 REFERENCE 앞에 넣는다 — 제출본은 "맨 앞 SUMMARY, 맨 마지막 REFERENCE" 순서를 지킨다."""
+    if not appendix:
+        return report
+    head, sep, tail = report.partition("## REFERENCE")
+    if not sep:
+        return report.rstrip() + "\n\n" + appendix
+    return head.rstrip() + "\n\n" + appendix.rstrip() + "\n\n" + sep + tail
+
+
 def _print_orchestration_summary(result: dict) -> None:
     run_id = result.get("run_id", "")
     decisions = summarize_routing(run_id)
@@ -124,7 +134,7 @@ def main() -> None:
     report_path = Path(result["report_path"])
     final_path = report_path.with_name(f"{report_path.stem}_final.md")
     final_path.write_text(
-        report_text.rstrip() + "\n\n" + render_decision_appendix(result["run_id"]), encoding="utf-8"
+        attach_before_reference(report_text, render_decision_appendix(result["run_id"])), encoding="utf-8"
     )
     print(f"[app] 최종 보고서(결정 이력 부록 포함): {final_path}")
     if not args.resume:  # 재개 실행은 루트 run id가 run_id와 달라 기록 대상이 없다

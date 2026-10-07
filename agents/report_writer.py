@@ -129,9 +129,10 @@ REPORT_TITLE = "KV Cache 최적화 기술 다관점 평가 보고서"
 
 
 def add_title(markdown: str, state: dict) -> str:
-    """보고서 맨 앞에 제목(H1)과 부제(대상 기술·관점·작성일)를 붙인다. LLM이 쓴 H1은 제거한다.
+    """보고서 맨 앞에 제목과 부제(대상 기술·관점·작성일)를 붙인다. LLM이 쓴 H1은 제거한다.
 
-    제목은 장(章)이 아니므로 "맨 앞 SUMMARY" 규칙(SUMMARY가 첫 장)과 충돌하지 않는다.
+    제목은 장(章)이 아니므로 Markdown 헤딩이 아닌 제목 블록(HTML)으로 넣는다 — 첫 장(章) 헤딩은
+    항상 SUMMARY여야 한다("맨 앞 SUMMARY" 규칙). PDF 변환기가 report-title 스타일로 렌더링한다.
     """
     lines = markdown.lstrip().splitlines()
     while lines and (lines[0].startswith("# ") or not lines[0].strip()):
@@ -141,7 +142,9 @@ def add_title(markdown: str, state: dict) -> str:
     )
     subtitle = " | ".join(p for p in (techs, "장문맥 처리 애플리케이션 관점",
                                        datetime.now().strftime("%Y-%m-%d")) if p)
-    return f"# {REPORT_TITLE}\n\n{subtitle}\n\n" + "\n".join(lines).rstrip() + "\n"
+    title_block = (f'<div class="report-title">{REPORT_TITLE}</div>\n'
+                   f'<div class="report-subtitle">{subtitle}</div>\n')
+    return title_block + "\n" + "\n".join(lines).rstrip() + "\n"
 
 
 def complete_references(markdown: str, catalog: list[dict]) -> str:

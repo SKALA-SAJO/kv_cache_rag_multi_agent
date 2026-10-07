@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -61,8 +62,9 @@ class ReportContractTest(unittest.TestCase):
     def test_title_is_prepended_once_and_llm_h1_is_replaced(self) -> None:
         state = {"selected_technologies": {"DeepSeek-V2 MLA": {"category": "SW"}, "InfiniGen": {"category": "HW·인프라"}}}
         titled = report_writer.add_title("# LLM이 쓴 제목\n\n## SUMMARY\n요약", state)
-        self.assertTrue(titled.startswith(f"# {report_writer.REPORT_TITLE}\n"))
-        self.assertEqual(titled.count("\n# "), 0)  # H1은 하나뿐
+        self.assertTrue(titled.startswith(f'<div class="report-title">{report_writer.REPORT_TITLE}</div>'))
+        self.assertFalse(re.search(r"^# ", titled, flags=re.MULTILINE))  # 제목은 장(章) 헤딩이 아님
+        self.assertEqual(re.findall(r"^#{1,2}\s+(.+)$", titled, flags=re.MULTILINE)[0], "SUMMARY")
         self.assertNotIn("LLM이 쓴 제목", titled)
         self.assertIn("DeepSeek-V2 MLA(SW) · InfiniGen(HW·인프라)", titled)
         self.assertLess(titled.index(report_writer.REPORT_TITLE), titled.index("## SUMMARY"))
@@ -86,7 +88,8 @@ class ReportContractTest(unittest.TestCase):
             self.assertNotIn("final_report", result)
             self.assertEqual(Path(result["report_path"]), reports[0])
             body = reports[0].read_text(encoding="utf-8")
-            self.assertTrue(body.startswith(f"# {report_writer.REPORT_TITLE}"))  # 제목이 맨 앞
+            self.assertTrue(body.startswith('<div class="report-title">'))  # 제목이 맨 앞(헤딩 아닌 제목 블록)
+            self.assertIn(report_writer.REPORT_TITLE, body.splitlines()[0])
             self.assertIn("SUMMARY", body)
             self.assertIn("REFERENCE", body)
 

@@ -62,9 +62,9 @@
   받는 반면 B는 …")를 추가하고, TRL은 논문·공개 저장소 근거만 있으면 6을 상한으로 두어 실행 간 점수 흔들림을 줄임
 - 실행마다 `outputs/`에 보고서(`report_*_rev{n}.md`), 품질 verdict(`*.quality.json`), 결정 로그
   (`traces/{run_id}.jsonl`), 최종본(`report_*_final.md`), 제출용 PDF(`Agent-Output_*.pdf`) 생성
-- **결정 이력 부록** : 최종본·제출 PDF 끝에 이번 run의 Supervisor 결정 이력 표(step·결정·대상·사유)와
+- **결정 이력 부록** : 최종본·제출 PDF의 REFERENCE 바로 앞에 이번 run의 Supervisor 결정 이력 표(step·결정·대상·사유)와
   `run_id`를 자동 첨부 → 보고서만으로 동적 경로를 확인하고 LangSmith 트레이스와 대조 가능.
-  부록은 실행 메타데이터라 품질 평가 대상이 아니며, 품질 평가·종료 결정까지 끝난 뒤 붙인다
+  부록은 실행 메타데이터라 품질 평가 대상이 아니며, 품질 평가·종료 결정까지 끝난 뒤 붙인다(맨 앞 SUMMARY·맨 마지막 REFERENCE 순서 유지)
 
 
 ## Tech Stack
@@ -312,6 +312,7 @@ uv run python -m unittest discover -s tests -v   # API 호출 없음
   이전 품질 verdict의 오인 방지를 API 없는 회귀 테스트로 검증. 재개 시 완료된 병렬 관점의
   중복 실행 방지 검증과 보고서 저장 테스트의 검색 의존성 격리
   및 깨끗한 클론 재현성 점검(Usage·환경 설정·기본 경로), app 체크포인트 정리 로그 통합 테스트
+  및 PDF 변환에 전달되는 최종 Markdown의 SUMMARY·REFERENCE 챕터 순서 검증
 - 서지원 : 근거 충분도 게이트 기준 설계(근거 수·출처 다양성·정보 부족 판정), 기술 조사·기술 성숙도
   Agent State 경량화(원문 청크 `retrieved_documents` 제거로 체크포인트 비용 절감),
   LangGraph 노드 동시 실행 상한 설정(`max_concurrency=4`) 및 비용 제어 근거 문서화
