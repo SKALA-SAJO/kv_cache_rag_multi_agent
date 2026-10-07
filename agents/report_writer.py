@@ -99,6 +99,10 @@ GRAPH_DESIGN_NOTE = (
 )
 
 
+# 굵게 강조된 인용 `[**R1**]`, `**[R1]**` — 품질 규칙은 `[R1]`만 인용으로 인식해 "관점 절 인용 없음"으로
+# 오판한다 (최종 실행에서 인용 36개가 전부 이 표기여서 FAIL). 의미는 같으므로 결정론적으로 정규화한다.
+_BOLD_CITATION_INNER = re.compile(r"\[\s*\*{1,2}\s*(R\d+)\s*\*{1,2}\s*\]")
+_BOLD_CITATION_OUTER = re.compile(r"\*{1,2}(\[R\d+\])\*{1,2}")
 _NON_REF_CITATION = re.compile(r"\s*\[(?!R\d)[A-Za-z_]+\]")
 # REFERENCE 항목 앞머리의 ID 표기 변형: "- R1 ...", "- (R1) ...", "- R1. ...", "- R1: ..." → "- [R1] ..."
 _REF_ID_PREFIX = re.compile(r"^(\s*[-*]\s*)\(?(R\d+)\)?[.:)]?\s+", flags=re.MULTILINE)
@@ -110,11 +114,13 @@ _REF_ANNOTATION = re.compile(r"\s*\[(?:원문|external_search|implementation_doc
 def clean_report(markdown: str) -> str:
     """프롬프트로 금지했지만 LLM이 종종 남기는 형식 위반을 결정론적으로 제거한다.
 
+    - 굵게 강조된 인용(`[**R1**]`, `**[R1]**`)을 `[R1]`로 정규화
     - 본문의 `[R#]`가 아닌 가짜 인용 태그 (예: `[orchestration]`)
     - REFERENCE 항목 뒤의 파일명·doc_type 주석 (예: `[원문: infinigen.pdf]`)
     - REFERENCE 절의 `(참고) ...` 같은 메타 설명 문단
     - REFERENCE 항목 ID 표기 변형(`- R1 ...`, `- ... [R1]`)을 `- [R1] ...`로 정규화 (인용 검증 오탐 방지)
     """
+    markdown = _BOLD_CITATION_OUTER.sub(r"\1", _BOLD_CITATION_INNER.sub(r"[\1]", markdown))
     head, sep, tail = markdown.partition("## REFERENCE")
     head = _NON_REF_CITATION.sub("", head)
     if sep:

@@ -74,5 +74,21 @@ class ReferenceSuffixIdTest(unittest.TestCase):
         self.assertEqual(cleaned.count("[R1]"), 2)
 
 
+class BoldCitationTest(unittest.TestCase):
+    def test_bold_citations_are_normalized_and_counted(self) -> None:
+        # 실제 최종 실행 사례: 4.1~4.4의 인용 36개가 전부 [**R1**] 표기 → 규칙이 "관점 절 인용 없음"으로 오판
+        from tests.test_quality_evaluation import GOOD_REPORT, REFS
+        from agents.base import build_reference_catalog
+
+        catalog = build_reference_catalog(REFS)
+        bold = re.sub(r"\[(R\d+)\]", r"[**\1**]", GOOD_REPORT.split("## REFERENCE")[0]) + \
+            "## REFERENCE" + GOOD_REPORT.split("## REFERENCE")[1]
+        self.assertTrue(report_writer.citation_issues(bold, catalog))  # 정규화 전엔 미달
+        cleaned = report_writer.clean_report(bold)
+        self.assertNotIn("**", cleaned.split("## REFERENCE")[0].replace("**평가", ""))
+        self.assertEqual(report_writer.citation_issues(cleaned, catalog), [])
+        self.assertEqual(report_writer.clean_report("근거 **[R2]** 이다"), "근거 [R2] 이다")
+
+
 if __name__ == "__main__":
     unittest.main()
