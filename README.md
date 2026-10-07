@@ -100,13 +100,29 @@ Supervisor 자체는 LLM이 아닌 **결정론적 정책**이다. LLM 판정이 
   `outputs/traces/{run_id}.jsonl`과 LangSmith로 보낸다 ([`graph/observability.py`](graph/observability.py)).
   State에는 최신 결정 1건(`last_decision`)만 덮어써서 트레이스의 supervisor 노드 출력에서도 사유가 보인다.
 - 지속성 비용 : 이전 버전의 `retrieved_documents`(청크 원문 전체)를 State에서 제거. 근거는 300자로
-  자른 `evidence_items`만 두고 리듀서가 매 병합마다 중복 제거 → 재작업이 반복돼도 체크포인트가 커지지
-  않음. 보고서 이력·verdict·PDF는 파일로만 저장. 인용 카탈로그도 저장하지 않고 `references`에서 결정론적으로 재구성.
+  자른 `evidence_items`만 두고 리듀서가 매 병합마다 중복 제거 → State 한 건의 크기는 억제됨. 보고서 이력·verdict·PDF는
+  파일로만 저장. 인용 카탈로그도 저장하지 않고 `references`에서 결정론적으로 재구성.
+  - 실측(2026-10-07, 기본 질문 1회 실행) : 10스텝·재작업 1회 실행은 `outputs/checkpoints.sqlite`에 체크포인트
+    22개·약 3.4MB, 15스텝·재작업 2회 실행은 32개·약 5.6MB가 쌓였다. State는 종료 시점에 약 216KB이며
+    `evidence_items`(182건)가 113KB로 절반을 차지하고 `references` 18KB, `final_report` 15KB가 뒤를 잇는다.
+  - 원인 : 큰 건 State가 아니라 **스냅샷 횟수**다. SqliteSaver는 superstep마다 변경분이 아니라 State 전체를 다시
+    저장한다. Supervisor 1스텝 = 체크포인트 약 2개(supervisor + 하위 노드)이고 State는 단조 증가해 첫 평가 이후
+    130~230KB이므로, 용량 ≈ 체크포인트 수 × 약 0.15~0.2MB로 스텝에 비례한다. `MAX_SUPERVISOR_STEPS=30`까지 가면
+    체크포인트 약 60개로 12~14MB가 되며, 보고된 14MB와 같은 규모다(추정). 또 DB는 실행(thread)마다 누적되고 자동 정리되지 않는다.
+  - 대응 : 재작업 예산(`MAX_REWORK_PER_AGENT`, `MAX_FAITHFULNESS_ROUNDS`)과 스텝 상한이 곧 크기 상한이다. 완료된
+    실행은 마지막 체크포인트만 남기고 지우면 DB 사본 시뮬레이션 기준 약 0.23MB(약 93% 감소)로 줄며, 재개가 필요 없어진
+    실행에만 적용한다(진행 중 실행을 지우면 `--resume` 불가). 수동 정리는 `sqlite3 outputs/checkpoints.sqlite
+    "delete from checkpoints where thread_id='<run_id>'; delete from writes where thread_id='<run_id>'; vacuum;"`.
+    DB는 git에 포함되지 않는 산출물이므로 제출 전에 삭제해도 된다.
 - 상관 : `run_id` 하나가 SqliteSaver `thread_id`, LangSmith 루트 run id·metadata, 결정 로그 파일명을
   모두 잇는다. 콘솔 첫 줄에 `run_id`가 출력된다.
 - 재개/복구 : `node_status`(pending/running/done/failed/excluded) + `attempts` + `errors`가 재개에
   필요한 최소 상태. 체크포인트는 `outputs/checkpoints.sqlite`에 저장되고 `python app.py --resume <run_id>`로
   마지막 superstep부터 재개 (중단 시 `running`이던 노드는 다시 실행).
+  - 검증(2026-10-07) : ① 관점 4개 병렬 평가 중 Ctrl+C → `--resume`로 이어서 보고서·품질 PASS까지 완료(10스텝).
+    병렬 스레드가 끝날 때까지 기다린 뒤 종료돼 Ctrl+C 후 프로세스가 내려가기까지 8초 넘게 걸리고(정확한 시간은 미측정),
+    그때까지 끝난 노드의 결과는 체크포인트에 저장돼 재개 시 step 3(synthesis)부터 이어진다. ② 같은 구간에서 SIGKILL로
+    강제 종료 → `--resume`은 미완료 4개 관점을 처음부터 다시 실행해 끝까지 완료(15스텝, 재작업 2회, 품질 PASS).
 - 동시 처리 : Supervisor가 관점 Agent를 한 superstep에 병렬 디스패치하므로 동시에 쓰는 필드에 리듀서
   적용 — `node_status`/`errors`는 key 단위 dict 병합(`merge_dict`), `evidence_items`/`references`는
   중복 제거 리스트 병합. 관점 결과는 Agent마다 키가 달라 충돌 없음. `attempts`/`rework_counts`는
