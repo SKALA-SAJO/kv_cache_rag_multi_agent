@@ -1,12 +1,14 @@
 """보고서 생성 Agent (PDF Agent K). RAG 여부: X. 종합 결과를 최종 Markdown 보고서로 구성한다."""
 
 import json
+import re
 from datetime import datetime
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from agents.base import get_llm, load_prompt
+from agents.base import build_reference_catalog, get_llm, load_prompt
 from config import settings
+from graph.observability import summarize_decisions
 from graph.state import GraphState
 from scripts.download_papers import CORPUS_SOURCES
 
@@ -80,23 +82,84 @@ EMBEDDING_CANDIDATES_NOTE = (
     "최대 입력 길이 8,192 토큰·Dense 임베딩 차원 1024를 지원하기 때문."
 )
 GRAPH_DESIGN_NOTE = (
-    "State 설계 - research_question/selected_technologies/evaluation_rubric(초기화 Node가 "
-    "주입) -> retrieved_documents/technical_evidence(기술 조사 Agent) -> "
-    "trl/market/stakeholder/domain_evaluation(4관점 평가, 병렬 실행) -> "
-    "evidence_items/references(전체 Agent가 누적, source_url/document_id 기준 중복 제거) -> "
-    "synthesis(관점 간 agreements/conflicts/favorable_conditions) -> "
-    "faithfulness_check(claim-evidence 대조, pass/fail) -> retry_count/retry_hints(재검색 제어) "
-    "-> final_report. "
-    "Graph 흐름 설계 - init -> tech_research -> [trl_evaluation/market_evaluation/"
-    "stakeholder_evaluation/domain_evaluation 병렬 팬아웃] -> synthesis -> faithfulness_check -> "
-    "(검증 실패 시 LangGraph Send API로 근거 부족 claim의 출처 Agent만 표적 재실행, 무한루프 "
-    "방지를 위해 최대 retry_count회) -> report_writer."
+    "패턴 - Supervisor(hub-and-spoke). 모든 하위 Agent는 Supervisor로만 복귀하고 Agent 간 직접 "
+    "엣지는 없다. Supervisor는 매 스텝 State(수집된 관점, 관점별 근거 충분도, 검증·품질 verdict, "
+    "재작업 예산)를 읽어 결정론적 정책으로 next_nodes를 정하고, add_conditional_edges가 그 값으로 "
+    "분기한다(실행 순서 하드코딩 없음). "
+    "State 설계 - 작업 페이로드(technical_evidence, 4관점 평가, evidence_items/references, synthesis, "
+    "faithfulness_check, final_report, quality_verdict)와 제어 메타데이터(run_id, step_count/max_steps, "
+    "next_nodes, last_decision, node_status, attempts, errors, rework_counts, retry_hints, sufficiency, "
+    "report_revisions, quality_feedback)를 분리. 결정 로그 전문은 State 밖 JSONL과 LangSmith로 보내고 "
+    "run_id로 연결. 병렬 디스패치로 동시에 쓰이는 node_status/errors/evidence_items/references는 리듀서로 병합. "
+    "Graph 흐름 - init -> supervisor -> (tech_research | 4관점 Agent 병렬 | synthesis | faithfulness_check | "
+    "report_writer | quality_evaluation) -> supervisor ... -> END. 관점별 근거 충분도 게이트(근거 수·출처 "
+    "다양성·정보 부족 판정) 미달 관점, Faithfulness 실패 claim의 출처 Agent, 품질 평가에서 근거 부족으로 "
+    "지목된 관점만 재작업하고, 서술 문제는 보고서 재작성으로 보낸다. 종료는 품질 평가 통과 또는 "
+    "재작업·재작성·스텝 상한 소진 시."
 )
 
 
+_NON_REF_CITATION = re.compile(r"\s*\[(?!R\d)[A-Za-z_]+\]")
+# REFERENCE 항목 앞머리의 ID 표기 변형: "- R1 ...", "- (R1) ...", "- R1. ...", "- R1: ..." → "- [R1] ..."
+_REF_ID_PREFIX = re.compile(r"^(\s*[-*]\s*)\(?(R\d+)\)?[.:)]?\s+", flags=re.MULTILINE)
+_REF_ANNOTATION = re.compile(r"\s*\[(?:원문|external_search|implementation_document|market_document|technical_paper|domain_benchmark)[^\]]*\]")
+
+
+def clean_report(markdown: str) -> str:
+    """프롬프트로 금지했지만 LLM이 종종 남기는 형식 위반을 결정론적으로 제거한다.
+
+    - 본문의 `[R#]`가 아닌 가짜 인용 태그 (예: `[orchestration]`)
+    - REFERENCE 항목 뒤의 파일명·doc_type 주석 (예: `[원문: infinigen.pdf]`)
+    - REFERENCE 절의 `(참고) ...` 같은 메타 설명 문단
+    - REFERENCE 항목 ID 표기 변형(`- R1 ...`)을 `- [R1] ...`로 정규화 (인용 검증 오탐 방지)
+    """
+    head, sep, tail = markdown.partition("## REFERENCE")
+    head = _NON_REF_CITATION.sub("", head)
+    if sep:
+        lines = [
+            _REF_ANNOTATION.sub("", line).rstrip()
+            for line in tail.splitlines()
+            if not line.strip().startswith(("(참고", "（참고", "※"))
+        ]
+        tail = _REF_ID_PREFIX.sub(r"\1[\2] ", "\n".join(lines)).rstrip() + "\n"
+    return head + sep + tail
+
+
+def complete_references(markdown: str, catalog: list[dict]) -> str:
+    """본문에서 인용했지만 REFERENCE에 빠진 ID를 카탈로그로 채운다 (LLM 누락을 결정론적으로 보완).
+
+    추가 항목은 카탈로그에 실제로 있는 출처(source/url)만 쓰므로 근거를 지어내지 않는다.
+    """
+    from agents.quality_evaluation import extract_citations
+
+    head, sep, tail = markdown.partition("## REFERENCE")
+    if not sep:
+        return markdown
+    by_id = {c["ref_id"]: c for c in catalog}
+    listed = set(extract_citations(tail))
+    missing = [i for i in dict.fromkeys(extract_citations(head)) if i in by_id and i not in listed]
+    if not missing:
+        return markdown
+    lines = []
+    for ref_id in sorted(missing, key=lambda x: int(x[1:])):
+        c = by_id[ref_id]
+        title = c.get("source") or c.get("url") or "출처"
+        url = f", {c['url']}" if c.get("url") and c.get("url") != title else ""
+        lines.append(f"- [{ref_id}] {title}{url}")
+    return head + sep + tail.rstrip() + "\n\n기타 (본문 인용 보완)\n" + "\n".join(lines) + "\n"
+
+
 def run(state: GraphState) -> dict:
+    catalog = build_reference_catalog(state.get("references", []))
+    decisions = summarize_decisions(state.get("run_id", ""))
     payload = {
         "agent_definitions": [
+            {
+                "node": "supervisor",
+                "name": "Supervisor",
+                "rag": False,
+                "output": "next_nodes / last_decision (라우팅·재작업·종료 결정)",
+            },
             {
                 "node": "tech_research",
                 "name": "기술 조사 Agent",
@@ -145,6 +208,12 @@ def run(state: GraphState) -> dict:
                 "rag": False,
                 "output": "final_report",
             },
+            {
+                "node": "quality_evaluation",
+                "name": "보고서 품질 평가 노드 (Hybrid: 규칙 + LLM Judge)",
+                "rag": False,
+                "output": "quality_verdict",
+            },
         ],
         "run_config": {
             "generator_model": settings.generator_model,
@@ -164,8 +233,19 @@ def run(state: GraphState) -> dict:
         "domain_evaluation": state.get("domain_evaluation"),
         "synthesis": state.get("synthesis"),
         "faithfulness_check": state.get("faithfulness_check"),
-        "references": state.get("references"),
-        "retry_count": state.get("retry_count", 0),
+        "reference_catalog": catalog,
+        "orchestration": {
+            "supervisor_steps_so_far": state.get("step_count", 0),
+            "decisions": [
+                {"step": d.get("step"), "action": d.get("action"), "targets": d.get("targets")}
+                for d in decisions
+            ],
+            "rework_counts": state.get("rework_counts", {}),
+            "sufficiency": state.get("sufficiency", {}),
+            "excluded_agents": [n for n, st in state.get("node_status", {}).items() if st == "excluded"],
+            "report_revision": state.get("report_revisions", 0),
+        },
+        "quality_feedback": state.get("quality_feedback", ""),
         "retrieval_sample_results": _sample_retrieval_results(),
         "system_design": {
             "embedding_model": settings.embedding_model,
@@ -186,12 +266,13 @@ def run(state: GraphState) -> dict:
     response = llm.invoke(
         [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_content)]
     )
-    report_markdown = response.content
+    report_markdown = complete_references(clean_report(response.content), catalog)
 
     settings.outputs_path.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_path = settings.outputs_path / f"report_{timestamp}.md"
+    revision = state.get("report_revisions", 0)
+    report_path = settings.outputs_path / f"report_{timestamp}_rev{revision}.md"
     report_path.write_text(report_markdown, encoding="utf-8")
     print(f"[report_writer] 보고서 저장: {report_path}")
 
-    return {"final_report": report_markdown}
+    return {"final_report": report_markdown, "report_path": str(report_path)}

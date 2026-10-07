@@ -4,9 +4,11 @@
 synthesis의 각 claim을 evidence_items(State)와 대조한다. 실패한 claim은
 evidence_refs를 통해 evidence_items의 agent 필드로 역추적되어, "어느 Agent를
 재실행해야 하는지"(agents_to_retry)와 "그 Agent에게 줄 재검색 힌트"(retry_hints)를
-이 파일이 프로그램적으로 계산한다 — LLM은 claim-evidence 일치 여부만 판정하고,
-라우팅 결정 자체는 Python이 결정론적으로 수행한다 (graph/workflow.py의
-route_after_faithfulness가 이 결과로 Send 기반 표적형 재검색을 수행).
+이 파일이 프로그램적으로 계산한다 — LLM은 claim-evidence 일치 여부만 판정한다.
+
+Supervisor 패턴의 통신 제약에 따라 이 Agent는 다른 Agent의 입력(retry_hints)을 직접
+쓰지 않는다. 재작업 후보와 힌트는 자기 verdict(faithfulness_check) 안에만 담고, 재작업
+여부·대상은 Supervisor(graph/supervisor.py)가 재작업 상한과 함께 결정한다.
 """
 
 import json
@@ -52,15 +54,10 @@ def run(state: GraphState) -> dict:
 
     retry_hints = {agent: " / ".join(notes) for agent, notes in hints_by_agent.items()}
 
-    retry_count = state.get("retry_count", 0)
-    if not result.passed:
-        retry_count += 1
-
     return {
         "faithfulness_check": {
             **result.model_dump(),
             "agents_to_retry": sorted(agents_to_retry),
+            "retry_hints": retry_hints,
         },
-        "retry_count": retry_count,
-        "retry_hints": retry_hints,
     }

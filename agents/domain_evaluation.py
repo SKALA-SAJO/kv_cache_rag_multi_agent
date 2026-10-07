@@ -130,7 +130,6 @@ def run(state: GraphState) -> dict:
             all_evidence_items.extend(evidence_items)
 
     return {
-        "retrieved_documents": all_docs,
         "domain_evaluation": result_by_tech,
         "references": documents_to_references(all_docs),
         "evidence_items": all_evidence_items,

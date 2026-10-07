@@ -1,26 +1,33 @@
-"""KV Cache 최적화 기술 다관점 평가 Multi-Agent RAG 시스템 실행 스크립트.
+"""KV Cache 최적화 기술 다관점 평가 — Supervisor 패턴 Multi-Agent 실행 스크립트.
 
 사전 준비:
-    python -m scripts.download_papers   # 기술 문서 RAG 코퍼스 다운로드
+    python -m scripts.download_papers   # RAG 코퍼스 다운로드
     python -m rag.ingest                # 색인 구축
 
 실행:
-    python app.py
+    python app.py                         # 새 실행 (run_id 자동 발급)
     python app.py --question "다른 평가 질문"
+    python app.py --resume <run_id>       # 중단된 실행을 마지막 체크포인트부터 재개
 """
 
 import argparse
+import os
 import sys
 import time
+import uuid
+from collections import Counter
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
+from langgraph.checkpoint.sqlite import SqliteSaver  # noqa: E402
+
 from config import settings  # noqa: E402
-from graph.workflow import build_graph, print_timing_summary  # noqa: E402
+from graph.observability import print_timing_summary, summarize_decisions, trace_path  # noqa: E402
+from graph.workflow import build_graph  # noqa: E402
 from rag.external_search import register as register_external_search  # noqa: E402
-from scripts.report_to_pdf import _latest_report  # noqa: E402
 from scripts.report_to_pdf import DEFAULT_CAMPUS, DEFAULT_CLASS, DEFAULT_TEAM_NAMES, OUTPUTS_DIR  # noqa: E402
 from scripts.report_to_pdf import convert as convert_report_to_pdf  # noqa: E402
 
@@ -28,11 +35,27 @@ DEFAULT_QUESTION = (
     "장문맥 처리 애플리케이션 관점에서 DeepSeek-V2 MLA와 InfiniGen을 기술 성숙도, 시장성, "
     "이해관계자, 도메인 적합성 4가지 관점에서 비교 평가하라."
 )
+CHECKPOINT_DB = OUTPUTS_DIR / "checkpoints.sqlite"
+
+
+def _print_orchestration_summary(result: dict) -> None:
+    run_id = result.get("run_id", "")
+    decisions = summarize_decisions(run_id)
+    print("\n=== Supervisor 결정 이력 ===")
+    for d in decisions:
+        print(f"  step {d['step']:>2} | {d['action']:<22} -> {d['targets'] or 'END'}")
+    actions = Counter(d["action"] for d in decisions)
+    reworks = sum(v for k, v in actions.items() if k.startswith("rework") or k == "revise_report")
+    print(f"  라우팅 {len(decisions)}회, 재작업/재작성 {reworks}회, rework_counts={result.get('rework_counts', {})}")
+    verdict = result.get("quality_verdict") or {}
+    print(f"  품질 평가: {'PASS' if verdict.get('passed') else 'FAIL ' + str(verdict.get('failed_criteria'))}")
+    print(f"  결정 로그: {trace_path(run_id)}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="KV Cache 기술 다관점 평가 Multi-Agent RAG")
+    parser = argparse.ArgumentParser(description="KV Cache 기술 다관점 평가 (Supervisor 패턴)")
     parser.add_argument("--question", default=DEFAULT_QUESTION, help="평가 질문")
+    parser.add_argument("--resume", metavar="RUN_ID", help="중단된 실행을 체크포인트에서 재개")
     args = parser.parse_args()
 
     if not settings.vectorstore_path.exists():
@@ -43,26 +66,46 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+    if os.getenv("LANGSMITH_TRACING", "").lower() != "true" or not os.getenv("LANGSMITH_API_KEY"):
+        print("[app] LangSmith 트레이싱 비활성 (.env의 LANGSMITH_TRACING/LANGSMITH_API_KEY 확인)", file=sys.stderr)
 
     register_external_search()
-    workflow = build_graph()
+    run_id = args.resume or str(uuid.uuid4())
+    # run_id = 체크포인트 thread_id = LangSmith metadata(+새 실행이면 루트 run id) = 결정 로그 파일명
+    config = {
+        "configurable": {"thread_id": run_id},
+        "recursion_limit": settings.graph_recursion_limit,
+        "run_name": "kv-cache-supervisor",
+        "tags": ["supervisor-pattern", "resume" if args.resume else "fresh"],
+        "metadata": {"run_id": run_id},
+    }
+    if not args.resume:
+        config["run_id"] = uuid.UUID(run_id)
+    print(f"[app] run_id={run_id}")
 
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     total_start = time.perf_counter()
-    result = workflow.invoke({"research_question": args.question})
+    with SqliteSaver.from_conn_string(str(CHECKPOINT_DB)) as checkpointer:
+        workflow = build_graph(checkpointer=checkpointer)
+        graph_input = None if args.resume else {"research_question": args.question, "run_id": run_id}
+        result = workflow.invoke(graph_input, config=config)
     total_elapsed = time.perf_counter() - total_start
+
+    if not result.get("final_report"):
+        print("[app] 보고서가 생성되지 않았습니다. 결정 로그를 확인하세요.", file=sys.stderr)
+        _print_orchestration_summary(result)
+        sys.exit(2)
 
     print("\n=== 최종 평가 보고서 ===\n")
     print(result["final_report"])
     print_timing_summary()
+    _print_orchestration_summary(result)
     print(f"\n[timing] 전체 실행 시간: {total_elapsed:.1f}초")
 
-    # 제출용 PDF(RAG-Output)도 매 실행 직후 최신 보고서 기준으로 자동 갱신한다.
-    # 실패해도 .md 보고서는 이미 저장돼 있으므로 파이프라인 자체를 실패시키지 않는다.
+    # 제출용 PDF(Agent-Output)를 이번 실행의 최종 보고서로 갱신한다. 실패해도 .md는 이미 저장됨.
     try:
-        pdf_path = (
-            OUTPUTS_DIR / f"RAG-Output_{DEFAULT_CAMPUS}_{DEFAULT_CLASS}_{DEFAULT_TEAM_NAMES}.pdf"
-        )
-        convert_report_to_pdf(_latest_report(), pdf_path)
+        pdf_path = OUTPUTS_DIR / f"Agent-Output_{DEFAULT_CAMPUS}_{DEFAULT_CLASS}_{DEFAULT_TEAM_NAMES}.pdf"
+        convert_report_to_pdf(Path(result["report_path"]), pdf_path)
     except Exception as exc:  # noqa: BLE001
         print(f"[app] PDF 변환 실패(보고서 .md는 저장됨): {exc}", file=sys.stderr)
 

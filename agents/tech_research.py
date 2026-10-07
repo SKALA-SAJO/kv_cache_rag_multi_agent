@@ -171,7 +171,6 @@ def run(state: GraphState) -> dict:
     # 기술별 검색 결과가 서로 겹칠 수 있으므로 State reducer에 넘기기 전에 다시 제거한다.
     all_docs = _deduplicate_documents(all_docs)
     return {
-        "retrieved_documents": all_docs,
         "technical_evidence": evidence,
         "references": documents_to_references(all_docs),
         "evidence_items": all_evidence_items,

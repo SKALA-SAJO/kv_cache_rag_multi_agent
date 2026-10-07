@@ -6,9 +6,14 @@
 uv run python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-검사 대상은 State 리듀서, Graph 분기, 코퍼스 계획, 500/50 토큰 청킹, 표·그림 캡션
+검사 대상은 State 리듀서, Supervisor 라우팅 정책·그래프 동적 실행(재작업·Fall-back·종료 보장), 품질 평가 규칙, 코퍼스 계획, 500/50 토큰 청킹, 표·그림 캡션
 분리, Retriever 필터, 외부 검색 tool-calling 결과 변환, 보고서 SUMMARY/REFERENCE 계약,
 프로젝트 구조다.
+
+`test_state_workflow.py`의 체크포인트 테스트는 대역 관점 Agent에서 `KeyboardInterrupt`로
+실행을 중단한 뒤 임시 SQLite DB를 닫고 다시 연다. 새 그래프에서 같은 `thread_id`로
+`invoke(None, ...)`를 호출하여 보고서·품질 평가·종료까지 재개되는지, 이미 완료한 기술
+조사를 반복하지 않는지, 다른 thread에 상태가 섞이지 않는지 확인한다. 실제 API를 호출하지 않는다.
 
 ## 실제 API 통합 테스트 (비용 발생 가능)
 
@@ -20,6 +25,8 @@ RUN_LIVE_TESTS=1 uv run python -m unittest tests.test_integration_live -v
 ```
 
 이 테스트는 실제 OpenAI·Tavily를 호출하고 `outputs/`에 Markdown 보고서를 만든다.
+Supervisor 구조에 맞춰 `quality_verdict`와 종료 상태(`next_nodes == []`)도 확인한다.
+품질 예산 소진으로 미달 상태에서 종료할 수도 있으므로 종료 여부와 품질 통과 여부는 구분한다.
 
 ## Retrieval 평가 (Hit@K / MRR)
 
