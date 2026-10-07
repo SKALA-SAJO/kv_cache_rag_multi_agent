@@ -105,6 +105,13 @@ Supervisor 자체는 LLM이 아닌 **결정론적 정책**이다. LLM 판정이 
   하위 Agent가 직접 지우지 않는 것은 "하위 Agent는 제어 필드를 쓰지 않는다"는 통신 제약 때문이다.
   같은 원칙으로, 재작업·재작성으로 보고서가 다시 써지면 Supervisor가 이전 `quality_verdict`도 비우고(하류 결과
   무효화), 새 보고서의 평가가 반복 실패해 종료하면 `evaluated: false`("평가 불가")로 명시해 이전 판정이 남지 않게 한다.
+  - 레이어드 : 두 블록을 주석 구분이 아니라 **별도 TypedDict 두 개**로 선언한다 — `PayloadState`(작업 결과 15개 키)와
+    `ControlState`(제어 메타 14개 키)를 따로 정의하고 `GraphState`가 둘을 상속해 그래프 스키마가 된다(전부 `total=False`로 부분
+    업데이트 허용). 층별 키가 겹치지 않고 합치면 `GraphState`와 같다는 것, 병렬 쓰기 리듀서가 분리 후에도 유지되는 것, 제어 키는
+    Supervisor와 `_worker` 래퍼만 쓴다는 것을 [`tests/test_state_layers.py`](tests/test_state_layers.py)가 고정한다.
+    하위 Agent별 Worker State 타입은 두지 않았다. 관점별 결과 키가 Agent마다 달라 충돌하지 않고, Agent별 실행 상태는
+    `node_status`/`attempts`/`errors`가 노드 키로 나눠 담아 같은 역할을 하기 때문이다(Agent별 상태 타입을 더하면 같은 정보가 두 곳에
+    생긴다). 한 통으로 설계했던 State를 층으로 나누라는 과제 요구를 타입 수준까지 적용한 설계이며, 별도 하위 State 그래프(서브그래프)까지는 가지 않았다.
 - 관측성 위치 : 결정 로그 전문(step, action, targets, **reason**, 충분도 판정)은 State 밖
   `outputs/traces/{run_id}.jsonl`과 LangSmith로 보낸다 ([`graph/observability.py`](graph/observability.py)).
   State에는 최신 결정 1건(`last_decision`)만 덮어써서 트레이스의 supervisor 노드 출력에서도 사유가 보인다.
@@ -242,10 +249,22 @@ Supervisor 정책 우선순위 (`graph/supervisor.py` `decide`):
 
 
 ## Usage
-```bash
-uv sync                                    # 의존성 설치 (Python 3.11, uv.lock 기준)
-cp .env.example .env                       # OPENAI_API_KEY, TAVILY_API_KEY, LANGSMITH_API_KEY 입력
+Python 3.11 이상과 `uv`가 필요하다. 처음 재현할 때는 과제 코드가 있는 `agent/supervisor` 브랜치를
+지정한다. 기본 테스트와 도움말 확인에는 API 키, 데이터 다운로드, 색인 구축이 필요하지 않다.
 
+```bash
+git clone --branch agent/supervisor --single-branch https://github.com/SKALA-SAJO/kv_cache_rag_multi_agent.git
+cd kv_cache_rag_multi_agent
+uv sync                                    # uv.lock 기준 의존성 설치
+cp .env.example .env                       # 기본 테스트에서는 API 키를 비워 둬도 됨
+uv run python -m unittest discover -s tests -v   # 기본 테스트: 실제 API 호출 없음
+uv run python app.py --help                # 데이터·색인 없이 명령 옵션 확인
+```
+
+실제 보고서 생성 전에는 `.env`의 `OPENAI_API_KEY`, `TAVILY_API_KEY`를 입력한다. LangSmith는
+선택 사항이며, 트레이스를 남기려면 `LANGSMITH_API_KEY`와 계정 리전에 맞는 엔드포인트를 설정한다.
+
+```bash
 uv run python -m scripts.download_papers   # RAG 코퍼스 다운로드
 uv run python -m rag.ingest                # FAISS 색인 + BM25 청크 생성
 
@@ -253,6 +272,11 @@ uv run python app.py                       # 실행 (run_id 자동 발급, 콘�
 uv run python app.py --resume <run_id>     # 중단된 실행을 체크포인트부터 재개
 uv run python app.py --keep-checkpoints   # 정상 종료 후에도 중간 체크포인트 유지 (기본은 마지막 것만 남기고 정리)
 ```
+기본 경로는 저장소 기준 `data/raw/`(원문), `data/processed/chunks.jsonl`(청크),
+`vectorstore/index.faiss`·`index.pkl`(검색 색인), `outputs/`(보고서·체크포인트)다.
+이 산출물들은 Git에 포함되지 않아 새 클론에서 실제 실행하려면 다운로드와 색인 구축이 필요하다.
+다운로드 스크립트와 PDF·체크포인트 저장 경로는 기본 경로를 사용하므로 재현 시 `.env.example`의
+경로 설정을 그대로 유지한다.
 콘솔에 Supervisor 결정이 `[supervisor] step N | action -> targets | reason` 형식으로 실시간 출력되고,
 종료 시 결정 이력·라우팅/재작업 횟수·품질 판정이 요약된다. LangSmith 프로젝트(`LANGSMITH_PROJECT`)에서
 `kv-cache-supervisor` 트레이스를 열면 supervisor ↔ 하위 Agent 왕복과 재작업 경로를 확인할 수 있다
@@ -262,6 +286,8 @@ uv run python app.py --keep-checkpoints   # 정상 종료 후에도 중간 체�
 ```bash
 uv run python -m unittest discover -s tests -v   # API 호출 없음
 ```
+실제 API 통합 테스트는 `RUN_LIVE_TESTS=1 uv run python -m unittest tests.test_integration_live -v`로
+명시적으로 활성화한다(키·데이터·색인 필요, 비용 발생 가능). 기본 테스트에는 이 변수를 설정하지 않는다.
 `tests/test_state_workflow.py`는 하위 Agent를 대역으로 바꿔 실제 그래프를 돌려 충분도 재작업·실패
 재시도·품질 미달 재작성·무한 루프 방지를 검증한다. Retrieval 지표 재측정:
 `uv run python -m tests.evaluate_retrieval --dataset heldout`
@@ -276,6 +302,7 @@ uv run python -m unittest discover -s tests -v   # API 호출 없음
   `next_nodes == []` 및 최종 품질 노드 완료 검증을 추가. `RUN_LIVE_TESTS` 미설정·`0`·`1` 실행 조건과
   이전 품질 verdict의 오인 방지를 API 없는 회귀 테스트로 검증. 재개 시 완료된 병렬 관점의
   중복 실행 방지 검증과 보고서 저장 테스트의 검색 의존성 격리
+  및 깨끗한 클론 재현성 점검(Usage·환경 설정·기본 경로), app 체크포인트 정리 로그 통합 테스트
 - 서지원 : 근거 충분도 게이트 기준 설계(근거 수·출처 다양성·정보 부족 판정), 기술 조사·기술 성숙도
   Agent State 경량화(원문 청크 `retrieved_documents` 제거로 체크포인트 비용 절감),
   LangGraph 노드 동시 실행 상한 설정(`max_concurrency=4`) 및 비용 제어 근거 문서화
