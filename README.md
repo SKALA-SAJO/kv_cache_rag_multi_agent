@@ -105,6 +105,13 @@ Supervisor 자체는 LLM이 아닌 **결정론적 정책**이다. LLM 판정이 
   하위 Agent가 직접 지우지 않는 것은 "하위 Agent는 제어 필드를 쓰지 않는다"는 통신 제약 때문이다.
   같은 원칙으로, 재작업·재작성으로 보고서가 다시 써지면 Supervisor가 이전 `quality_verdict`도 비우고(하류 결과
   무효화), 새 보고서의 평가가 반복 실패해 종료하면 `evaluated: false`("평가 불가")로 명시해 이전 판정이 남지 않게 한다.
+  - 레이어드 : 두 블록을 주석 구분이 아니라 **별도 TypedDict 두 개**로 선언한다 — `PayloadState`(작업 결과 15개 키)와
+    `ControlState`(제어 메타 14개 키)를 따로 정의하고 `GraphState`가 둘을 상속해 그래프 스키마가 된다(전부 `total=False`로 부분
+    업데이트 허용). 층별 키가 겹치지 않고 합치면 `GraphState`와 같다는 것, 병렬 쓰기 리듀서가 분리 후에도 유지되는 것, 제어 키는
+    Supervisor와 `_worker` 래퍼만 쓴다는 것을 [`tests/test_state_layers.py`](tests/test_state_layers.py)가 고정한다.
+    하위 Agent별 Worker State 타입은 두지 않았다. 관점별 결과 키가 Agent마다 달라 충돌하지 않고, Agent별 실행 상태는
+    `node_status`/`attempts`/`errors`가 노드 키로 나눠 담아 같은 역할을 하기 때문이다(Agent별 상태 타입을 더하면 같은 정보가 두 곳에
+    생긴다). 한 통으로 설계했던 State를 층으로 나누라는 과제 요구를 타입 수준까지 적용한 설계이며, 별도 하위 State 그래프(서브그래프)까지는 가지 않았다.
 - 관측성 위치 : 결정 로그 전문(step, action, targets, **reason**, 충분도 판정)은 State 밖
   `outputs/traces/{run_id}.jsonl`과 LangSmith로 보낸다 ([`graph/observability.py`](graph/observability.py)).
   State에는 최신 결정 1건(`last_decision`)만 덮어써서 트레이스의 supervisor 노드 출력에서도 사유가 보인다.
