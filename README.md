@@ -1,251 +1,223 @@
 # Subject
-본 프로젝트는 KV Cache 최적화 기술을 SW·HW 두 진영에서 선정(DeepSeek-V2 MLA, InfiniGen)하여,
-기술 성숙도·시장성·이해관계자·장문맥 처리 애플리케이션 적용성 네 가지 관점에서 근거 기반으로
-비교 평가하는 Multi-Agent RAG 시스템임. 상세 설계 근거는 [`sample.pdf`](./sample.pdf)
-(RAG-Design 설계 문서)를 따름.
+본 프로젝트는 KV cache 최적화 기술을 소프트웨어(DeepSeek-V2 MLA), 하드웨어(InfiniGen) 두 진영에서
+선정하여, 기술 성숙도·시장·이해관계자·도메인 관점에서 평가하는 **Supervisor 패턴** 기반으로
+설계/개발 하는 프로젝트 임. 이전 RAG 과제(`main` 브랜치, 고정 순차·병렬 흐름)를 이 브랜치
+(`agent/supervisor`)에서 동적 에이전트 패턴으로 재구성함.
 
 
 ## Overview
-- Objective : KV Cache 병목을 해결하는 서로 다른 접근(SW/HW)의 두 기술을 복수 관점에서 비교 평가
-- Method : Multi-Agent(Distributed) + Agentic RAG (LangGraph 기반, 8개 Agent + Faithfulness 검증 루프)
-- Tools : LangGraph, LangChain, OpenAI GPT, FAISS, BAAI/bge-m3, BAAI/bge-reranker-v2-m3, Tavily
+- Objective : 하나의 기술을 복수 관점에서 근거 기반으로 비교 평가 (우열 판정이 아님)
+- Pattern : **Supervisor** — 보고서 생성의 핵심 위험이 "근거가 부족한 채로 결론을 쓰는 것"이므로,
+  사전 계획을 병렬 분배하는 Orchestrator-Workers보다 **관점별 근거 충분도를 판정하고 부족한 관점만
+  재조사시킨 뒤에야 보고서로 넘어가는** Supervisor가 목적에 맞음. 이전 RAG 버전이 이미 근거마다
+  생성 Agent(`evidence_items.agent`)를 기록하고 있어, "어느 관점을 재작업시킬지"를 State만으로
+  결정할 수 있다는 점도 선정 근거.
+- 동적 처리 : 노드 순서가 그래프에 고정돼 있지 않다. 모든 하위 Agent는 Supervisor로만 돌아오고,
+  Supervisor가 매 스텝 State(수집된 관점·근거 충분도·검증/품질 verdict·남은 예산)를 보고
+  `add_conditional_edges`로 다음 노드를 고른다. 같은 코드라도 실행마다 경로가 달라진다 —
+  예: 근거 부족 관점만 재작업 → 종합 재실행, 검증 실패 claim의 출처 Agent만 재작업, 품질 미달 시
+  보고서 재작성, 실패 Agent 재시도/제외, 예산 소진 시 종료.
+- 실제 실행 예 (run `1f4c1962`, `outputs/traces/{run_id}.jsonl`) : Supervisor 라우팅 **29회**, 재작업 **6회**.
+  `collect_tech → collect_perspectives(4 병렬) → synthesize → verify → rework_unfaithful[tech_research]
+  → (4관점 재수집) → … → rework_unfaithful[market, trl] → … → rework_unfaithful[domain] → write_report
+  → evaluate_quality(FAIL: groundedness) → rework_quality[domain] → synthesize → verify → write_report
+  → evaluate_quality(PASS) → END`. 고정 파이프라인이었다면 9노드 1회 실행으로 끝났을 흐름이 State 판정에
+  따라 매번 다른 Agent 부분집합만 재실행됐다.
 
 
 ## Selected Technologies
-- SW : **DeepSeek-V2 Multi-head Latent Attention (MLA)** — Key/Value를 저차원 latent
-  representation으로 공동 압축해 KV Cache 저장량을 93.3% 감소. 모델 아키텍처 수준에서 장문맥
-  스케일링에 직접 대응.
-- HW : **InfiniGen** — 호스트(CPU) 메모리에 KV Cache를 두고, 필요한 항목만 예측하여
-  GPU로 선택적으로 프리페치하는 동적 오프로딩 기반 서빙 시스템. 메모리 계층·서빙 시스템 수준의 접근.
+- SW : **DeepSeek-V2 Multi-head Latent Attention (MLA)** — Key/Value를 저차원 latent로 공동 압축해
+  KV Cache 저장량을 줄이는 모델 아키텍처 수준 접근.
+- HW : **InfiniGen** — KV Cache를 호스트(CPU) 메모리에 두고 필요한 항목만 예측해 GPU로 선택적
+  프리페치하는 메모리 계층·서빙 시스템 수준 접근.
 
-두 기술 모두 "컨텍스트 길이가 증가할 때 발생하는 KV Cache 병목"을 해결하지만 적용 수준이 다르므로,
-논문 성능 수치를 직접 대결시키지 않고 해결 방식·메모리 효율·정확도 보존·지연·도입 난이도를 중심으로
-비교함 (선정 사유 상세: `sample.pdf` A절 참고).
+두 기술 모두 "컨텍스트 길이 증가에 따른 KV Cache 병목"을 다루지만 적용 층위가 달라, 논문 수치를
+직접 대결시키지 않고 조건별 차이를 정리한다.
 
 
 ## Features
-- 4종 코퍼스(기술 원문·공식 구현 README·장문맥 도메인 벤치마크·시장 자료) 기반 Hybrid RAG 검색
-  (Dense + Sparse(RRF 결합) → Cross-encoder 재정렬), `doc_type`/`technology`로 Agent별 검색
-  범위를 좁힐 수 있음
-- 토큰 기준 청킹(약 500토큰/overlap 50) + 표·그림 캡션 별도 청크 분리
-- 시장·이해관계자 평가 Agent는 Tavily 외부 검색 도구를 tool-calling으로 호출해 실시간 근거를
-  보강 (검색 결과가 없으면 근거를 지어내지 않고 정직하게 "정보 부족"으로 처리)
-- 4관점(기술 성숙도 / 시장성 / 이해관계자 / 장문맥 도메인 적합성) Rubric 기반 평가 — 근거가
-  부족하면 점수·라벨을 억지로 매기지 않고 `정보 부족`으로 정직하게 표기
-- 평가 종합 Agent가 관점 간 **일치점·상충점을 제거하지 않고 그대로 보고** → 확증 편향 방지 전략
-  (특정 기술을 최종 승자로 선정하지 않음)
-- 검증 Agent(Faithfulness Check)가 종합 결과의 claim을 근거(evidence_items)와 대조하고, 실패한
-  claim의 **출처 Agent만 표적 재실행**(전체 재시작이 아님, 최대 `MAX_VERIFICATION_RETRIES`회)
-- 최종 Markdown 평가 보고서 자동 생성 및 `outputs/`에 저장
-- `tests/`에 네트워크·API 호출 없이 도는 재현 가능한 자동 테스트 스위트, Retrieval 품질(Hit@K,
-  MRR) 평가, Generation 품질(Faithfulness, Answer Relevance) 평가 스크립트 포함
+- PDF·README·HTML 4종 코퍼스 기반 정보 추출 — Hybrid RAG(FAISS Dense + BM25, RRF) → Cross-encoder
+  재정렬, `doc_type`/`technology` 필터로 Agent별 검색 범위 분리
+- 시장·이해관계자 Agent는 Tavily 외부 검색을 tool-calling으로 호출해 실시간 근거 보강
+- **Supervisor 근거 충분도 게이트** : 관점별 근거 수(≥3)·출처 다양성(≥2종)·`insufficient_evidence`
+  판정을 결정론적으로 계산해, 미달 관점에만 재작업 지시(`retry_hints`)를 내려보냄
+- **Faithfulness Check** : 종합 claim을 근거와 대조, 실패 claim의 출처 Agent만 재작업 대상으로 Supervisor에 보고
+- **Fall-back** : 하위 Agent 예외 → 1회 재시도 → 그래도 실패하면 **제외**하고 보고서에
+  "정보 부족(실행 실패로 제외)"으로 표기 (병렬 실행 중 한 Agent가 죽어도 그래프는 계속)
+- 확증 편향 방지 전략 : 관점 간 상충(conflicts)을 제거하지 않고 보고, 특정 기술을 승자로 선언하지 않음.
+  품질 평가에서 단일 출처 편중(한 출처 > 근거의 50%), 외부 출처 미인용, 한쪽 기술 한계 누락을 미달로 판정
+- **보고서 품질 평가 (Hybrid = 1안 + 2안)** : 보고서 생성 직후 필수 게이트. 4개 항목(Groundedness·
+  중립성·편향 통제·관점 커버리지) 각각을 **규칙 판정 AND LLM Judge 판정**으로 결정하고, 분량(PDF 10쪽)·
+  필수 목차(SUMMARY/REFERENCE)도 검사. 미달 시 원인이 근거면 해당 관점 재작업, 서술이면 보고서 재작성 루프
+- 본문 모든 주장에 `[R#]` 인용 ID → REFERENCE와 1:1 연결 (규칙 기반 Groundedness 검사가 가능)
+- 실행마다 `outputs/`에 보고서(`report_*_rev{n}.md`), 품질 verdict(`*.quality.json`), 결정 로그
+  (`traces/{run_id}.jsonl`), 제출용 PDF(`Agent-Output_*.pdf`) 생성
 
 
 ## Tech Stack
-- Framework : LangGraph
-- LLM/Generator : OpenAI GPT (`GENERATOR_MODEL`, 기본값 `gpt-5-mini`)
-- LLM/Judge : OpenAI GPT (`JUDGE_MODEL`, Faithfulness Check 전용, 기본값 `gpt-5-mini`)
-- Retrieval : FAISS(Dense) + BM25(Sparse) Hybrid Retrieval(RRF 결합, Top-20-30) →
-  BAAI/bge-reranker-v2-m3 Cross-encoder 재정렬(Top-5-8). `doc_type`/`technology` 필터링 지원
+- Framework : LangGraph (StateGraph + `add_conditional_edges` + SqliteSaver 체크포인트)
+- LLM/Generator : OpenAI `gpt-5-mini` (`GENERATOR_MODEL`)
+- LLM/Judge : OpenAI `gpt-5-mini` (`JUDGE_MODEL`, Faithfulness Check·품질 평가 Judge)
+- Retrieval : FAISS(Dense) + BM25(Sparse) Hybrid(RRF, Top-25) → BAAI/bge-reranker-v2-m3 재정렬(Top-6)
   - Held-out 15문항 평가: **Hit Rate@1 0.533, Hit Rate@3 0.867, Hit Rate@5 0.867, MRR 0.678**
-- Embedding : BAAI/bge-m3 (다국어·긴 입력·Dense/Sparse 지원). 기본 연산 장치는 `cpu`(팀
-  전체 호환), Apple Silicon 사용자는 `EMBEDDING_DEVICE=mps`로 개인 설정 시 GPU 사용 가능
-  (아래 [MPS(Apple Silicon GPU) 사용](#mpsapple-silicon-gpu-사용) 참고)
-- External Search : Tavily (`TAVILY_API_KEY`) — LangChain 공식 통합, 구조화된 JSON 반환,
-  무료 티어로 팀 전원 재현 가능이라는 구조적 기준으로 팀이 선정
-
-### RAG 코퍼스 구성
-| `doc_type` | 문서 | 사용 Agent |
-|---|---|---|
-| `technical_paper` | DeepSeek-V2, InfiniGen 논문 | 기술 조사, 기술 성숙도, 도메인 평가 |
-| `implementation_document` | 두 논문의 공식 GitHub README | 기술 조사, 기술 성숙도 평가 |
-| `domain_benchmark` | LongBench, RULER 논문 | 도메인 평가 |
-| `market_document` | Gemini API Long Context 공식 문서 | 시장 평가 |
-
-`scripts/download_papers.py`의 `CORPUS_SOURCES`가 출처(URL)와 `doc_type`을 한 곳에서 관리하며,
-`rag/ingest.py`가 색인 시 이 값을 그대로 청크 메타데이터에 남긴다.
+- Embedding : BAAI/bge-m3 (다국어·긴 입력·Dense/Sparse 지원)
+- External Search : Tavily (LangChain 공식 통합, 구조화 JSON, 무료 티어 재현 가능)
+- Observability : LangSmith (루트 run id = `run_id`) + 외부 JSONL 결정 로그
 
 
 ## Agents
-| Agent | 역할 | RAG | 외부 검색 | 입력 | 출력 |
-|---|---|:---:|:---:|---|---|
-| 기술 조사 Agent | 기술 원리·성능·한계 추출 | O (기술원문+구현자료) | - | 기술 논문 | `technical_evidence` |
-| 기술 성숙도 평가 Agent | 공개 근거 기반 TRL(1-9) 추정 | O (기술원문+구현자료) | - | `technical_evidence` | `trl_evaluation` |
-| 시장 평가 Agent | 시장 수요·상용화·생태계 조사 | O (시장자료) | O (Tavily) | `technical_evidence` | `market_evaluation` |
-| 이해관계자 평가 Agent | 관계자별 이점·우려 분석 | X | O (Tavily) | `technical_evidence` | `stakeholder_evaluation` |
-| 도메인 평가 Agent | 장문맥 처리 환경 적합성 평가 | O (기술원문+도메인자료) | - | `technical_evidence` | `domain_evaluation` |
-| 평가 종합 Agent | 관점별 결과·충돌 지점 종합 | X | - | 4관점 평가 결과 | `synthesis` |
-| 검증 Agent (Faithfulness Check) | claim-evidence 일치 대조, 근거 부족 탐지, 재시도 대상 Agent 판정 | X | - | `synthesis`, `evidence_items` | `faithfulness_check` |
-| 보고서 생성 Agent | 결과를 보고서 형식으로 구성 | X | - | 종합·검증 결과, `references` | `final_report` |
+- **Supervisor** (조정 계층, `graph/supervisor.py`) : 매 스텝 State(수집된 관점·근거 충분도·검증/품질
+  verdict·남은 예산)를 읽고 다음 하위 Agent를 결정. 근거 충분도 게이트, 재작업 요청, 실패 Agent
+  재시도/제외, 종료 판단 담당. 하위 Agent는 Supervisor와만 통신
+- 기술 조사 Agent : 기술 원리·성능·한계 추출 (RAG: 기술 원문 + 공식 구현자료) → `technical_evidence`
+- 기술 성숙도 평가 Agent : 공개 근거 기반 TRL(1-9) 추정 (RAG) → `trl_evaluation`
+- 시장 평가 Agent : 수요·상용화·생태계 평가 (RAG 시장자료 + Tavily) → `market_evaluation`
+- 이해관계자 평가 Agent : 관계자 유형별 이점·우려 분석 (Tavily) → `stakeholder_evaluation`
+- 도메인 평가 Agent : 장문맥 처리 환경 적합성 평가 (RAG 원문 + LongBench/RULER) → `domain_evaluation`
+- 평가 종합 Agent : 관점 간 일치·상충·기술별 유리 조건 정리 (우열 판정 없음) → `synthesis`
+- 검증 Agent (Faithfulness Check) : 종합 claim을 근거와 대조, 실패 claim의 출처 Agent를 Supervisor에 보고 → `faithfulness_check`
+- 보고서 생성 Agent : `[R#]` 인용을 포함한 보고서 작성, 품질 미달 시 피드백 반영 재작성 → `final_report`
+- 품질 평가 노드 : 보고서 생성 후 Hybrid(규칙 AND LLM Judge) 4항목 + 분량 평가 → `quality_verdict`
 
-TRL은 1-9 숫자 척도, 시장성·이해관계자·도메인 적합성은 "근거 부족 / 근거 제한적 / 근거 충분"
-3단계 라벨을 쓴다(서로 다른 척도라 섞어 쓰지 않음). `TAVILY_API_KEY`가 없으면 외부 검색 도구가
-등록되지 않아 해당 Agent는 검색 없이 정직하게 "정보 부족"으로 처리한다.
+Supervisor 자체는 LLM이 아닌 **결정론적 정책**이다. LLM 판정이 필요한 부분(claim 대조·보고서 품질)은
+하위 노드가 구조화 verdict로 State에 남기고, Supervisor는 verdict + 예산으로만 분기한다 → 같은 State면
+같은 라우팅(재현성), 모든 결정에 사유가 기록됨.
+
+
+## State Schema
+정의: [`graph/state.py`](graph/state.py) (설계 원칙이 모듈 docstring에 문서화되어 있음)
+
+- 제어 vs 페이로드 분리 : `GraphState`를 두 블록으로 분리. 페이로드 = 관점별 결과·`evidence_items`·
+  `references`·`synthesis`·`final_report`·`quality_verdict`. 제어 = `run_id`, `step_count/max_steps`,
+  `next_nodes`, `last_decision`, `node_status`, `attempts`, `errors`, `rework_counts`, `retry_hints`,
+  `sufficiency`, `faithfulness_rounds`, `report_revisions`, `quality_feedback`. Supervisor는 페이로드 본문을 해석하지 않고
+  존재 여부·근거 수·출처 수·verdict 플래그만 읽는다.
+- 관측성 위치 : 결정 로그 전문(step, action, targets, **reason**, 충분도 판정)은 State 밖
+  `outputs/traces/{run_id}.jsonl`과 LangSmith로 보낸다 ([`graph/observability.py`](graph/observability.py)).
+  State에는 최신 결정 1건(`last_decision`)만 덮어써서 트레이스의 supervisor 노드 출력에서도 사유가 보인다.
+- 지속성 비용 : 이전 버전의 `retrieved_documents`(청크 원문 전체)를 State에서 제거. 근거는 300자로
+  자른 `evidence_items`만 두고 리듀서가 매 병합마다 중복 제거 → 재작업이 반복돼도 체크포인트가 커지지
+  않음. 보고서 이력·verdict·PDF는 파일로만 저장. 인용 카탈로그도 저장하지 않고 `references`에서 결정론적으로 재구성.
+- 상관 : `run_id` 하나가 SqliteSaver `thread_id`, LangSmith 루트 run id·metadata, 결정 로그 파일명을
+  모두 잇는다. 콘솔 첫 줄에 `run_id`가 출력된다.
+- 재개/복구 : `node_status`(pending/running/done/failed/excluded) + `attempts` + `errors`가 재개에
+  필요한 최소 상태. 체크포인트는 `outputs/checkpoints.sqlite`에 저장되고 `python app.py --resume <run_id>`로
+  마지막 superstep부터 재개 (중단 시 `running`이던 노드는 다시 실행).
+- 동시 처리 : Supervisor가 관점 Agent를 한 superstep에 병렬 디스패치하므로 동시에 쓰는 필드에 리듀서
+  적용 — `node_status`/`errors`는 key 단위 dict 병합(`merge_dict`), `evidence_items`/`references`는
+  중복 제거 리스트 병합. 관점 결과는 Agent마다 키가 달라 충돌 없음. `attempts`/`rework_counts`는
+  Supervisor만 쓰는 단일 writer 필드.
+- 종료 보장 : ① Supervisor 스텝 상한 `MAX_SUPERVISOR_STEPS=30`(초과 시 보고서만 생성 후 END),
+  ② 실패 재시도 `MAX_FAILURE_RETRIES=1`, ③ Agent별 재작업 `MAX_REWORK_PER_AGENT=2`, ④ 검증 재작업 라운드
+  `MAX_FAITHFULNESS_ROUNDS=2`(검증 루프가 스텝 예산을 소진해 품질 평가 루프에 못 가는 일 방지), ⑤ 보고서
+  재작성 `MAX_REPORT_REVISIONS=2`, ⑥ LangGraph `recursion_limit=80` 이중 가드. 품질이 끝내 미달이어도
+  예산 소진 시 verdict를 남기고 종료함을 테스트로 검증(`tests/test_state_workflow.py`).
 
 
 ## Architecture
+![Architecture](docs/architecture.png)
+
+<details><summary>Mermaid 원본</summary>
+
 ```mermaid
-flowchart TD
-    A[평가 질문 입력] --> B[기술 정보 + Rubric 로드]
-    B --> C[기술 조사 Agent<br/>기술원문+구현자료 RAG]
+flowchart TB
+    S([START]) --> I[init: 질문·기술·Rubric·제어 메타 초기화]
+    I --> SV{{"Supervisor<br/>State 기반 결정론적 라우팅<br/>(add_conditional_edges)"}}
 
-    C --> E[기술 성숙도 평가 Agent<br/>RAG]
-    C --> F[시장 평가 Agent<br/>RAG + Tavily]
-    C --> G[이해관계자 평가 Agent<br/>Tavily]
-    C --> H[도메인 평가 Agent<br/>RAG]
+    subgraph G1["① 수집"]
+        T[기술 조사 Agent]
+    end
+    subgraph G2["② 관점 평가 (필요한 관점만 병렬 디스패치)"]
+        P1[기술 성숙도] ~~~ P2[시장성] ~~~ P3[이해관계자] ~~~ P4[도메인 적용]
+    end
+    subgraph G3["③ 종합·검증"]
+        SY[평가 종합 Agent] ~~~ F[Faithfulness Check]
+    end
+    subgraph G4["④ 보고서·품질"]
+        R[보고서 생성 Agent] ~~~ Q[품질 평가 노드<br/>규칙 AND LLM Judge]
+    end
 
-    E --> I[평가 종합 Agent]
-    F --> I
-    G --> I
-    H --> I
+    SV --> G1 & G2 & G3 & G4
+    G1 & G2 & G3 & G4 --> SV
+    SV -->|"품질 통과 또는 예산 소진"| E([END])
 
-    I --> V[검증 Agent<br/>Faithfulness Check]
-    V --> J{claim이<br/>근거로 뒷받침되는가?}
-    J -- 예 / 재시도 한도 초과 --> K[보고서 생성 Agent]
-    J -- 아니오 (재시도 가능) --> R[실패 claim의 출처 Agent만<br/>Send로 표적 재실행]
-    R -.재실행.-> C
-    R -.재실행.-> E
-    R -.재실행.-> F
-    R -.재실행.-> G
-    R -.재실행.-> H
-    K --> L[최종 평가 보고서]
-
-    linkStyle 13 stroke:#d33,stroke-width:2px,stroke-dasharray: 6 4
+    SV -.->|"재작업: 근거 부족 관점 / 검증 실패 출처 / 품질 미달 원인 관점"| G2
+    SV -.->|"재작성: 품질 미달(서술 문제)"| R
 ```
+</details>
 
-실패 시 **전체를 처음부터 다시 돌지 않는다** — `faithfulness_check`가 실패한 claim의 근거
-(`evidence_items`)를 만든 Agent를 역추적해, 그 Agent(들)만 LangGraph `Send` API로 재호출한다.
-`tech_research`가 재시도 대상이면 정적 엣지를 타고 하위 4개 Agent도 자연히 다시 실행되므로,
-이 경우 하위 Agent는 중복 호출되지 않도록 재시도 목록에서 제외한다.
+실선 = Supervisor가 State에 따라 고르는 분기(모든 하위 노드는 Supervisor로만 복귀), 점선 = 재작업/재작성 루프.
+하위 Agent 간 엣지는 없다(모두 Supervisor 경유). LangGraph가 그린 실제 그래프는
+`uv run python -c "from graph.workflow import build_graph; print(build_graph().get_graph().draw_mermaid())"`로 확인할 수 있다.
 
-### PDF 설계와의 대응
-`sample.pdf` D절 Graph 설계를 코드 노드로 그대로 옮기되, 순수 함수 하나로 표현 가능한 인접
-단계는 하나의 LangGraph 노드로 합쳐 유지보수 단위를 줄였음.
-
-| PDF 노드 | 구현 노드 (`graph/workflow.py`) |
-|---|---|
-| 평가 질문 입력 + 기술 정보·Rubric 로드 | `init` |
-| 기술원문 RAG 검색 + 기술 조사 Agent | `tech_research` |
-| 4관점 평가 Agent | `trl_evaluation` / `market_evaluation` / `stakeholder_evaluation` / `domain_evaluation` |
-| 평가 종합 Agent | `synthesis` |
-| 검증 Agent + 분기 | `faithfulness_check` + `route_after_faithfulness` (조건부 엣지, `Send` 기반 표적 재시도) |
-| 보고서 생성 Agent | `report_writer` |
+Supervisor 정책 우선순위 (`graph/supervisor.py` `decide`):
+0. 스텝 상한 → 종료 / 1. 기술 조사 / 2. 미수집·실패 관점 병렬 디스패치(실패 재시도→제외) /
+3. 근거 충분도 게이트(미달 관점만 재작업) / 4. 종합 → 검증(실패 claim 출처 재작업) /
+5. 보고서 → 품질 평가 / 6. 품질 verdict: 통과 → END, 근거 문제 → 관점 재작업, 서술 문제 → 재작성, 예산 소진 → END
 
 
 ## Directory Structure
 ```
-├── data/
-│   ├── raw/                 # 원문(PDF/README/HTML) (scripts/download_papers.py로 생성, git 미포함)
-│   ├── processed/           # BM25 검색용 청크 jsonl (rag/ingest.py로 생성, git 미포함)
-│   └── eval/                # Retrieval/Generation 평가용 질문셋 (상세: tests/README.md)
-├── vectorstore/              # FAISS 색인 저장 디렉터리 (git 미포함)
-├── agents/                   # Agent 모듈 (8개)
-│   ├── base.py                 # LLM 호출·프롬프트 로딩·외부 검색 tool-calling 루프·evidence 변환
-│   ├── schemas.py               # Agent 구조화 출력 Pydantic 스키마
-│   ├── tech_research.py
-│   ├── trl_evaluation.py
-│   ├── market_evaluation.py
-│   ├── stakeholder_evaluation.py
-│   ├── domain_evaluation.py
-│   ├── synthesis.py
-│   ├── faithfulness_check.py
-│   └── report_writer.py
-├── prompts/                  # Agent별 시스템 프롬프트 템플릿 (Rubric 포함)
-├── rag/                      # RAG 파이프라인
-│   ├── embeddings.py            # 임베딩 모델 + MPS 동시호출 락
-│   ├── ingest.py                # 토큰 청킹, 표/캡션 분리, doc_type 태깅
-│   ├── retriever.py             # Hybrid 검색 + doc_type/technology 필터 + 재정렬
-│   └── external_search.py       # Tavily 등록 (agents.base.register_external_search_tool)
-├── graph/                    # LangGraph State·워크플로우
-│   ├── state.py                 # State 정의 + 중복 제거 리듀서
-│   └── workflow.py               # 그래프 조립 + 표적 재시도 라우팅
-├── scripts/
-│   ├── download_papers.py    # 코퍼스 4종 다운로드 (CORPUS_SOURCES 단일 출처)
-│   └── report_to_pdf.py      # report_*.md -> 제출용 RAG-Output PDF 변환
-├── tests/                    # 재현 가능한 자동 테스트 + Retrieval/Generation 평가 (상세: tests/README.md)
-├── assets/fonts/              # PDF 변환용 나눔고딕(OFL 라이선스) — git 포함
-├── outputs/                   # 평가 결과(최종 보고서 .md, 제출용 .pdf) 저장 (git 미포함)
-├── technologies.py            # 비교 대상 기술 메타데이터 (Human 선정 결과)
-├── rubrics.py                 # evaluation_rubric State에 주입되는 구조화된 Rubric
-├── config.py                  # 환경설정 (.env 로딩)
-├── app.py                     # 실행 스크립트
-├── pyproject.toml             # 의존성 정의 (uv 관리)
-├── uv.lock                    # 잠금 파일 (uv 관리)
-├── .env.example
+├── data/                     # 문서 풀 (raw: 원문, processed: 청크, eval: 검색 평가셋)
+├── vectorstore/              # FAISS 색인 (git 미포함)
+├── graph/                    # ── 조정 계층 ──
+│   ├── state.py                 # State 스키마 (제어/페이로드 분리, 리듀서)
+│   ├── supervisor.py            # Supervisor 정책·근거 충분도 게이트·라우팅
+│   ├── workflow.py              # 그래프 조립 (hub-and-spoke, 실패 래퍼)
+│   └── observability.py         # 외부 결정 로그(JSONL)·실행 시간
+├── agents/                   # ── 하위 Agent ──
+│   ├── base.py                  # LLM 호출·외부 검색 tool-calling·인용 카탈로그
+│   ├── schemas.py               # 구조화 출력 스키마 (평가·검증·품질 verdict)
+│   ├── tech_research.py / trl_evaluation.py / market_evaluation.py
+│   ├── stakeholder_evaluation.py / domain_evaluation.py
+│   ├── synthesis.py / faithfulness_check.py / report_writer.py
+│   └── quality_evaluation.py    # 보고서 품질 평가 (Hybrid)
+├── prompts/                  # Agent별 프롬프트 템플릿 (Rubric, 품질 Judge 기준 포함)
+├── rag/                      # 임베딩·청킹·Hybrid 검색·Tavily 등록
+├── scripts/                  # 코퍼스 다운로드, 보고서 → PDF 변환
+├── tests/                    # API 없이 도는 단위·그래프 통합 테스트 + 검색/생성 평가
+├── outputs/                  # 실행 결과: 보고서·verdict·결정 로그·체크포인트·PDF (git 미포함)
+├── docs/tracing/             # 제출용 LangSmith 트레이스 캡처 (tracing-1.png, ...)
+├── technologies.py / rubrics.py / config.py
+├── app.py                    # 실행 스크립트
 └── README.md
 ```
 
 
 ## Usage
-[uv](https://docs.astral.sh/uv/) 로 의존성·Python 버전을 관리함 (`.python-version`이 3.11을
-고정하며, 로컬에 없으면 `uv`가 필요한 인터프리터를 자동으로 내려받음).
-
 ```bash
-uv sync                             # .venv 생성 + 의존성 설치 (pyproject.toml/uv.lock 기준)
+uv sync                                    # 의존성 설치 (Python 3.11, uv.lock 기준)
+cp .env.example .env                       # OPENAI_API_KEY, TAVILY_API_KEY, LANGSMITH_API_KEY 입력
 
-cp .env.example .env                # OPENAI_API_KEY, TAVILY_API_KEY 입력 필수
+uv run python -m scripts.download_papers   # RAG 코퍼스 다운로드
+uv run python -m rag.ingest                # FAISS 색인 + BM25 청크 생성
 
-uv run python -m scripts.download_papers   # RAG 코퍼스(논문+README+벤치마크+시장문서) 다운로드
-uv run python -m rag.ingest                # FAISS 색인 + BM25용 청크 생성
-
-uv run python app.py                       # 기본 평가 질문으로 실행
-uv run python app.py --question "..."      # 커스텀 질문으로 실행
+uv run python app.py                       # 실행 (run_id 자동 발급, 콘솔 첫 줄에 출력)
+uv run python app.py --resume <run_id>     # 중단된 실행을 체크포인트부터 재개
 ```
-실행 결과 최종 보고서는 콘솔에 출력되고 `outputs/report_{timestamp}.md`로 저장됨. 각 단계(Agent)
-실행 시간도 `[timing]` 로그와 종료 시 요약 표로 함께 출력됨.
-
-`python app.py` 실행이 끝날 때마다 제출용 PDF(`outputs/RAG-Output_{캠퍼스}_{X반}_{이름들}.pdf`)도
-자동으로 최신 보고서 기준으로 갱신됨 — 별도 명령 불필요. pandoc 등 시스템 설치 없이 `uv sync`만으로
-동작(순수 Python + 리포에 포함된 나눔고딕 폰트). 특정 과거 보고서를 다시 변환하려면:
-```bash
-uv run python -m scripts.report_to_pdf --input outputs/report_20260922_121006.md
-```
-
-`TAVILY_API_KEY`가 비어 있어도 실행은 되지만, 시장·이해관계자 평가는 외부 검색 없이 진행되어
-근거가 부족하면 "정보 부족"으로 표시됨.
-
-`TAVILY_API_KEY`가 비어 있어도 실행은 되지만, 시장·이해관계자 평가는 외부 검색 없이 진행되어
-근거가 부족하면 "정보 부족"으로 표시됨.
+콘솔에 Supervisor 결정이 `[supervisor] step N | action -> targets | reason` 형식으로 실시간 출력되고,
+종료 시 결정 이력·라우팅/재작업 횟수·품질 판정이 요약된다. LangSmith 프로젝트(`LANGSMITH_PROJECT`)에서
+`kv-cache-supervisor` 트레이스를 열면 supervisor ↔ 하위 Agent 왕복과 재작업 경로를 확인할 수 있다.
 
 ### 테스트
 ```bash
-uv run python -m unittest discover -s tests -v   # 전체 테스트 (API 호출 없음, 네트워크 불필요)
+uv run python -m unittest discover -s tests -v   # API 호출 없음
 ```
-실제 API를 쓰는 통합 테스트, Generation 품질(Faithfulness/Answer Relevance) 평가 실행법은
-[`tests/README.md`](./tests/README.md)에 정리되어 있다.
-
-Retrieval 품질(Tech Stack 절의 Held-out 15문항 결과 참고)은 색인 후 다시 측정할 수 있다
-(smoke 5문항은 회귀 점검용, heldout 15문항이 성능 평가용):
-```bash
-uv run python -m tests.evaluate_retrieval --dataset heldout
-```
-
-### MPS(Apple Silicon GPU) 사용
-기본값은 `EMBEDDING_DEVICE=cpu`다 — 팀 전체(비-Apple Silicon 포함)가 항상 같은 조건으로
-재현할 수 있어야 하므로 공유 기본값은 바꾸지 않는다. Apple Silicon Mac에서 로컬 임베딩·재정렬
-속도를 높이고 싶다면 **본인 `.env`에서만** 다음처럼 바꾸면 된다:
-```bash
-EMBEDDING_DEVICE=mps
-```
-과거에는 LangGraph가 여러 평가 Agent를 병렬로 실행할 때 reranker/embedding을 동시에 호출하면
-PyTorch MPS 백엔드가 스레드 세이프하지 않아 세그폴트가 났다. 지금은 `rag/embeddings.py`의
-`MODEL_CALL_LOCK`이 임베딩·재정렬 호출을 전역 직렬화해 동시 호출도 안전하다(4개 스레드 동시
-호출 테스트로 확인). 다만 락으로 완전히 직렬화되므로, 그리고 전체 실행 시간의 병목이 로컬
-연산이 아니라 OpenAI API 왕복 시간이라, **체감되는 전체 속도 향상은 크지 않을 수 있다** — 로컬
-연산 자체(임베딩/재정렬 개별 호출)는 빨라지지만 파이프라인 전체 소요 시간을 크게 줄이지는
-않는다.
+`tests/test_state_workflow.py`는 하위 Agent를 대역으로 바꿔 실제 그래프를 돌려 충분도 재작업·실패
+재시도·품질 미달 재작성·무한 루프 방지를 검증한다. Retrieval 지표 재측정:
+`uv run python -m tests.evaluate_retrieval --dataset heldout`
 
 
 ## Contributors
-- 전은배 : Agent 초안(v0.0) 설계 및 구현(State/Schema/Graph, 8개 Agent, 기술 문서 RAG
-  파이프라인) — 이후 표적 재시도 라우팅, Tavily 외부 검색 도구 등록, MPS 동시성 버그 수정
-- 박성우 : RAG 코퍼스 확장(구현 README·도메인 벤치마크·시장 문서 수집, 토큰 기반 청킹),
-  외부 검색 tool-calling 공용 루프 설계, 재현 가능한 테스트 스위트 구축 및 Held-out 15문항
-  Retrieval 성능 측정(Hit Rate@K/MRR)
-- 서지원 : 기술 조사·기술 성숙도 평가 Agent 고도화(기술원문/구현자료 분리 검색, TRL 구간별
-  정보 갭 반영)
-- 최윤영 : 도메인 평가 Agent 고도화
-- 이승준 : Retriever `doc_type`/`technology` 필터링, Cross-encoder를 `bge-reranker-v2-m3`로 업그레이드
-- 박인애 : 시장 평가 Agent RAG 코퍼스 연동, 시장·이해관계자 프롬프트의 3단계 근거 라벨 정합화,
-  보고서 REFERENCE 형식 정리, 제출용 PDF 변환(`scripts/report_to_pdf.py`, 실행 종료 시 자동
-  갱신) 및 단계별 Agent 실행 시간 로깅 구현
+- 전은배 : Supervisor 패턴 설계 및 구현 — 결정론적 라우팅 정책(`graph/supervisor.py`), hub-and-spoke
+  그래프 재구성(`graph/workflow.py`), State Schema 제어/페이로드 분리 설계(`graph/state.py`)
+- 박성우 : 동적 동작 검증 테스트 — Supervisor 정책 단위 테스트, 하위 Agent 대역을 이용한 그래프 통합
+  테스트(재작업·실패 재시도/제외·보고서 재작성·무한 루프 방지), 품질 평가 규칙 테스트
+- 서지원 : 근거 충분도 게이트 기준 설계(근거 수·출처 다양성·정보 부족 판정), 기술 조사·기술 성숙도
+  Agent State 경량화(원문 청크 `retrieved_documents` 제거로 체크포인트 비용 절감)
+- 최윤영 : 보고서 품질 평가 노드 설계 — Hybrid(규칙 AND LLM Judge) 4항목(Groundedness·중립성·
+  편향 통제·관점 커버리지) 판정 기준과 Judge 프롬프트, 미달 원인별 재작업/재작성 분기 기준
+- 이승준 : 동시 처리·재개/복구 — 병렬 디스패치용 리듀서(`merge_dict`, 근거 중복 제거), 하위 Agent
+  실패 래퍼(Fall-back), SQLite 체크포인트 및 `--resume` 재개, 종료 보장 예산 설정
+- 박인애 : 관측성·보고서 출력 — 외부 결정 로그(JSONL)·LangSmith 연동(run_id 상관 키), `[R#]` 인용
+  카탈로그와 REFERENCE 연결, 10쪽 분량 검사(PDF 쪽수 측정), 제출용 Agent-Output PDF

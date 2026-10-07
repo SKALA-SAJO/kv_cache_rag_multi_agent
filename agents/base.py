@@ -309,3 +309,30 @@ def format_evidence_items(evidence_items: list[dict]) -> str:
             f"{source} {page})\n{item.get('evidence_quote', '')}"
         )
     return "\n\n".join(blocks)
+
+
+def build_reference_catalog(references: list[dict]) -> list[dict]:
+    """State references를 문서 단위로 묶고 안정적인 인용 ID(R1, R2, ...)를 부여한다.
+
+    같은 논문의 여러 페이지는 한 항목(pages 목록)으로 합친다. 입력 순서가 같으면 항상 같은
+    ID가 나오므로, report_writer(인용 작성)와 quality_evaluation(인용 검증)이 State만으로
+    같은 카탈로그를 재구성할 수 있다 — 카탈로그 자체를 State에 따로 저장하지 않는다.
+    """
+    catalog: dict[str, dict] = {}
+    for ref in references:
+        key = ref.get("url") or ref.get("source") or "unknown"
+        entry = catalog.get(key)
+        if entry is None:
+            entry = {
+                "ref_id": f"R{len(catalog) + 1}",
+                "source": ref.get("source"),
+                "url": ref.get("url"),
+                "source_type": ref.get("source_type", "RAG"),
+                "technology": ref.get("technology"),
+                "pages": [],
+            }
+            catalog[key] = entry
+        page = ref.get("page")
+        if page is not None and page not in entry["pages"]:
+            entry["pages"].append(page)
+    return list(catalog.values())
