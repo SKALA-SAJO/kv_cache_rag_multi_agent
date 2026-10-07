@@ -155,6 +155,32 @@ class SupervisorPolicyTest(unittest.TestCase):
                        evidence_items=_evidence("trl_evaluation", 5, 3))
         self.assertFalse(assess_sufficiency(state, "trl_evaluation")["sufficient"])
 
+    def test_stakeholder_tavily_urls_use_common_sufficiency_gate(self) -> None:
+        items = [
+            {"agent": "stakeholder_evaluation", "technology": tech,
+             "source_url": f"https://example.org/{tech}/{i % 2}"}
+            for tech in TECHS for i in range(settings.min_evidence_items)
+        ]
+        state = _state(stakeholder_evaluation={"A": {}, "B": {}}, evidence_items=items)
+        verdict = assess_sufficiency(state, "stakeholder_evaluation")
+        self.assertTrue(verdict["sufficient"])
+        self.assertEqual(verdict["per_technology"]["A"]["distinct_sources"], 2)
+        self.assertEqual(verdict["per_technology"]["B"]["distinct_sources"], 2)
+
+        too_few = assess_sufficiency(_state(stakeholder_evaluation={"A": {}, "B": {}},
+                                             evidence_items=[e for e in items if e["technology"] != "A"]
+                                                            + [e for e in items if e["technology"] == "A"][:-1]),
+                                      "stakeholder_evaluation")
+        self.assertFalse(too_few["sufficient"])
+        self.assertIn("A: 근거", too_few["reason"])
+
+        one_source = [dict(item, source_url="https://example.org/B/0") if item["technology"] == "B"
+                      else item for item in items]
+        verdict = assess_sufficiency(_state(stakeholder_evaluation={"A": {}, "B": {}},
+                                             evidence_items=one_source), "stakeholder_evaluation")
+        self.assertFalse(verdict["sufficient"])
+        self.assertIn("B: 출처 1종", verdict["reason"])
+
 
 def _fake_runners(calls: list[str], fail_once: set[str]):
     """하위 Agent 대역. market은 첫 실행에서 단일 출처 근거만 내 충분도 게이트에 걸리고,
