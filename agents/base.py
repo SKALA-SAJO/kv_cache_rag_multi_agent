@@ -225,6 +225,7 @@ def documents_to_evidence_items(
     agent: str,
     claim: str,
     quote_length: int = 300,
+    technology: str | None = None,
 ) -> list[dict]:
     """RAG로 검색된 문서를 evidence_items(State: evidence_items) 형태로 변환한다.
 
@@ -232,6 +233,9 @@ def documents_to_evidence_items(
     이 호출에서 사용한 근거 전체를 claim 하나에 묶어 등록한다 — 세부 claim 단위 귀속은
     평가 종합 Agent가 만드는 synthesis 단계 이후 검증 Agent가 evidence_items를 참조해
     판단한다. RAG로 실제 검색된 문서에서만 만들어지므로 근거를 지어내지 않는다.
+
+    technology: 기술별로 수집한 근거면 기술명을 남긴다(두 기술 공용 자료는 None).
+    Supervisor 충분도 게이트가 "관점 × 기술" 단위로 근거 수·출처 다양성을 판정할 때 쓴다.
     """
     items = []
     for doc in documents:
@@ -245,6 +249,7 @@ def documents_to_evidence_items(
                 "source_type": "RAG",
                 "limitation": "",
                 "agent": agent,
+                "technology": technology,
             }
         )
     return items
@@ -255,6 +260,7 @@ def search_results_to_evidence_items(
     agent: str,
     claim: str,
     quote_length: int = 300,
+    technology: str | None = None,
 ) -> list[dict]:
     """외부 검색 도구 결과를 evidence_items(State: evidence_items) 형태로 변환한다.
 
@@ -277,6 +283,7 @@ def search_results_to_evidence_items(
                 "source_type": "external_search",
                 "limitation": "",
                 "agent": agent,
+                "technology": technology,
             }
         )
     return items

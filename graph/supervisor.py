@@ -12,10 +12,10 @@ Supervisor는 매 스텝 현재 State(수집된 관점, 근거 충분도, 검증
 같은 State면 항상 같은 라우팅 = 재현성, 그리고 모든 결정에 사유(reason)가 붙는다.
 
 정책 우선순위 (decide):
-  0. 종료 가드      : step_count > max_steps → 보고서가 있으면 END, 없으면 보고서만 강제 생성
+  0. 종료 가드      : step_count > max_steps → (필요 시 보고서 1회 생성) → 품질 평가 1회 → END
   1. 기술 조사      : technical_evidence 미수집 → tech_research
   2. 관점 수집      : 미수집/실패 관점 → 병렬 디스패치 (실패는 재시도 상한 후 '제외')
-  3. 근거 충분도    : 관점별 evidence 수·출처 다양성·insufficient_evidence 판정 → 부족 관점만 재작업
+  3. 근거 충분도    : 관점 × 기술별 evidence 수·출처 다양성·insufficient_evidence 판정 → 부족 관점만 재작업
   4. 종합/검증      : synthesis → faithfulness_check, 검증 실패 claim의 출처 Agent만 재작업
   5. 보고서/품질    : report_writer → quality_evaluation
   6. 품질 미달 루프 : 관점 문제 → 해당 관점 재작업, 서술 문제 → 보고서 재작성, 예산 소진 → END
@@ -79,32 +79,39 @@ def initial_control_state(run_id: str) -> dict[str, Any]:
 
 
 def assess_sufficiency(state: GraphState, agent: str) -> dict[str, Any]:
-    """관점 Agent 하나의 근거 충분도를 State만으로 판정한다.
+    """관점 Agent 하나의 근거 충분도를 "관점 × 기술" 단위로, State만으로 판정한다.
 
-    기준: (1) 해당 Agent가 남긴 evidence_items 수 ≥ min_evidence_items,
+    Agent 전체 합계로 세면 한 기술의 근거가 다른 기술을 가려 준다(예: 두 기술 모두 자기 논문
+    1편에만 의존해도 합치면 출처 2종). 그래서 선정 기술마다 따로 본다.
+    기준: 기술마다 (1) 그 기술로 태깅된 evidence_items 수 ≥ min_evidence_items,
          (2) 서로 다른 출처 수 ≥ min_distinct_sources (단일 출처 의존 방지),
-         (3) 어떤 기술도 insufficient_evidence=true가 아님.
+         (3) insufficient_evidence=true가 아님.
+    두 기술 공용 자료(technology=None)는 기술별 근거로 세지 않는다.
     """
     output = state.get(agent) or {}
     items = [e for e in state.get("evidence_items", []) if e.get("agent") == agent]
-    sources = {e.get("document_id") or e.get("source_url") for e in items} - {None}
-    insufficient_techs = [
-        tech for tech, value in output.items() if isinstance(value, dict) and value.get("insufficient_evidence")
-    ]
 
+    per_tech: dict[str, dict[str, Any]] = {}
     problems = []
-    if len(items) < settings.min_evidence_items:
-        problems.append(f"근거 {len(items)}건 < {settings.min_evidence_items}")
-    if len(sources) < settings.min_distinct_sources:
-        problems.append(f"출처 {len(sources)}종 < {settings.min_distinct_sources} (단일 출처 의존)")
-    if insufficient_techs:
-        problems.append(f"정보 부족 판정 기술: {', '.join(insufficient_techs)}")
+    for tech in state.get("selected_technologies", {}):
+        tech_items = [e for e in items if e.get("technology") == tech]
+        sources = {e.get("document_id") or e.get("source_url") for e in tech_items} - {None}
+        tech_problems = []
+        if len(tech_items) < settings.min_evidence_items:
+            tech_problems.append(f"근거 {len(tech_items)}건 < {settings.min_evidence_items}")
+        if len(sources) < settings.min_distinct_sources:
+            tech_problems.append(f"출처 {len(sources)}종 < {settings.min_distinct_sources} (단일 출처 의존)")
+        value = output.get(tech)
+        if isinstance(value, dict) and value.get("insufficient_evidence"):
+            tech_problems.append("Agent가 정보 부족으로 판정")
+        per_tech[tech] = {"evidence_count": len(tech_items), "distinct_sources": len(sources)}
+        if tech_problems:
+            problems.append(f"{tech}: {', '.join(tech_problems)}")
 
     return {
         "sufficient": not problems,
-        "evidence_count": len(items),
-        "distinct_sources": len(sources),
-        "reason": "; ".join(problems) if problems else "근거 수·출처 다양성 기준 충족",
+        "per_technology": per_tech,
+        "reason": "; ".join(problems) if problems else "기술별 근거 수·출처 다양성 기준 충족",
     }
 
 
@@ -171,10 +178,17 @@ def decide(state: GraphState) -> tuple[list[str], str, str, dict[str, Any]]:
 def _policy(d: _Decision, state: GraphState, step: int) -> tuple[list[str], str, str]:
     # 0. 종료 가드 ───────────────────────────────────────────────────────────
     max_steps = state.get("max_steps", settings.max_supervisor_steps)
+    # 상한 이후에도 품질 평가(필수 게이트)는 건너뛰지 않는다: 보고서가 없거나 낡았으면 1회 생성,
+    # 현재 보고서가 미평가면 1회 평가 후 결과(통과/미달)와 무관하게 종료 → 상한 + 최대 2스텝.
     if step > max_steps:
-        if state.get("final_report") or d.status_of(REPORT_NODE) in {"failed", "excluded"}:
-            return [], END_ACTION, f"스텝 상한({max_steps}) 도달 — 현재 보고서로 종료"
-        return d.dispatch([REPORT_NODE], "force_report", f"스텝 상한({max_steps}) 도달 — 보고서만 생성 후 종료")
+        if d.status_of(REPORT_NODE) in _NEEDS_RUN:
+            return d.dispatch([REPORT_NODE], "force_report", f"스텝 상한({max_steps}) 도달 — 보고서 생성 후 품질 평가 1회")
+        if (state.get("final_report") and d.status_of(REPORT_NODE) == "done"
+                and d.status_of(QUALITY_NODE) in _NEEDS_RUN):
+            return d.dispatch([QUALITY_NODE], "force_quality", f"스텝 상한({max_steps}) 도달 — 종료 전 품질 평가 1회(필수 게이트)")
+        verdict = state.get("quality_verdict") or {}
+        outcome = "통과" if verdict.get("passed") else f"미달 {verdict.get('failed_criteria')}" if verdict else "평가 불가"
+        return [], END_ACTION, f"스텝 상한({max_steps}) 도달 — 현재 보고서로 종료 (품질 평가: {outcome})"
 
     # 1. 기술 조사 ───────────────────────────────────────────────────────────
     tech = d.status_of(TECH_NODE)

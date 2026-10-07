@@ -7,9 +7,8 @@ sample.pdf B.3/D.1에 따라 기술 원문과 공식 구현자료(GitHub README)
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-
 from langchain_core.documents import Document
+from langchain_core.runnables.config import ContextThreadPoolExecutor
 
 from agents.base import (
     documents_to_evidence_items,
@@ -118,11 +117,13 @@ def _process_technology(
         paper_docs,
         agent=AGENT_NAME,
         claim=f"{tech_name} 원리·성능·한계·실험 조건 근거",
+        technology=tech_name,
     )
     implementation_items = documents_to_evidence_items(
         implementation_docs,
         agent=AGENT_NAME,
         claim=f"{tech_name} 공개 구현·재현 조건 근거",
+        technology=tech_name,
     )
     for item in implementation_items:
         item["limitation"] = (
@@ -157,7 +158,7 @@ def run(state: GraphState) -> dict:
 
     # 기술 간 참조가 없는 독립 작업이므로 병렬 실행한다. 제출 순서대로 결과를 모아
     # (완료 순서가 아님) 순차 실행과 동일한 병합 순서를 보장한다.
-    with ThreadPoolExecutor(max_workers=len(technologies) or 1) as executor:
+    with ContextThreadPoolExecutor(max_workers=len(technologies) or 1) as executor:
         futures = [
             executor.submit(_process_technology, tech_name, tech_info, retry_hint)
             for tech_name, tech_info in technologies.items()

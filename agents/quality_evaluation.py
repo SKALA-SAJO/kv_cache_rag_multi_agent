@@ -203,7 +203,11 @@ def _judge_input(state: GraphState, report: str, catalog: list[dict]) -> str:
 
 
 def combine(rules: dict[str, dict], judgement: QualityJudgement | None) -> dict[str, Any]:
-    """규칙 판정과 LLM 판정을 항목별 AND로 결합해 quality_verdict를 만든다."""
+    """규칙 판정과 LLM 판정을 항목별 AND로 결합해 quality_verdict를 만든다.
+
+    Fail-closed: Judge 호출/파싱이 실패했거나(judgement=None) 특정 항목 판정이 빠지면 그 항목은
+    통과로 치지 않는다. 품질 게이트가 "판정 불가 = 통과"가 되면 내용 검사가 조용히 사라진다.
+    """
     llm = {c.criterion: c for c in judgement.criteria} if judgement else {}
     criteria: dict[str, dict] = {}
     rework_targets: set[str] = set()
@@ -211,7 +215,7 @@ def combine(rules: dict[str, dict], judgement: QualityJudgement | None) -> dict[
     for name in CRITERIA:
         rule = rules[name]
         judge = llm.get(name)
-        llm_passed = judge.passed if judge else True
+        llm_passed = judge.passed if judge else False
         passed = rule["passed"] and llm_passed
         criteria[name] = {
             "passed": passed,
@@ -220,7 +224,9 @@ def combine(rules: dict[str, dict], judgement: QualityJudgement | None) -> dict[
         }
         if not passed:
             feedback_lines += [f"[{name}/rule] {i}" for i in rule["issues"]]
-            if judge and not judge.passed:
+            if judge is None:
+                feedback_lines.append(f"[{name}/judge] LLM Judge 판정 없음 — 내용 검증 불가로 미달 처리")
+            elif not judge.passed:
                 feedback_lines += [f"[{name}/judge] {i}" for i in judge.issues]
                 rework_targets.update(judge.rework_targets)
     criteria["format"] = {"passed": rules["format"]["passed"], "rule": rules["format"], "llm": None}
@@ -237,6 +243,7 @@ def combine(rules: dict[str, dict], judgement: QualityJudgement | None) -> dict[
         "rework_targets": sorted(rework_targets),
         "feedback": "\n".join(feedback_lines),
         "method": "hybrid(rule AND llm_judge)",
+        "judge_available": judgement is not None,
     }
 
 
@@ -250,9 +257,13 @@ def run(state: GraphState) -> dict:
         "perspective_coverage": rule_coverage(report),
         "format": rule_format(report),
     }
-    judgement = structured_call(
-        QualityJudgement, SYSTEM_PROMPT, _judge_input(state, report, catalog), role="judge"
-    )
+    try:
+        judgement = structured_call(
+            QualityJudgement, SYSTEM_PROMPT, _judge_input(state, report, catalog), role="judge"
+        )
+    except Exception as exc:  # noqa: BLE001 - Judge 장애는 노드 실패가 아니라 "미달" verdict로 남긴다
+        print(f"[quality_evaluation] LLM Judge 실패 → 미달 처리: {type(exc).__name__}: {exc}", flush=True)
+        judgement = None
     verdict = combine(rules, judgement)
     verdict["revision"] = state.get("report_revisions", 0)
 
