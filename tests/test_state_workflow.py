@@ -403,6 +403,50 @@ class TechReworkScopeGraphTest(unittest.TestCase):
         self.assertEqual(result["retry_hints"], {})  # 모든 재작업 지시가 소비 후 정리됨
 
 
+class StaleQualityVerdictTest(unittest.TestCase):
+    def test_previous_verdict_is_not_reported_when_new_evaluation_fails(self) -> None:
+        calls: list[str] = []
+        runners = _fake_runners(calls, fail_once=set())
+        quality_calls = 0
+
+        def quality(state):
+            nonlocal quality_calls
+            quality_calls += 1
+            calls.append("quality_evaluation")
+            if quality_calls == 1:  # v0: 미달 → 재작성 요청
+                return {"quality_verdict": {"passed": False, "failed_criteria": ["groundedness"],
+                                            "rework_targets": [], "feedback": "fix", "revision": 0}}
+            raise RuntimeError("quality node crashed")  # v1 평가: 재시도 포함 계속 실패
+
+        runners["quality_evaluation"] = quality
+        with tempfile.TemporaryDirectory() as tmp, patch.object(settings, "outputs_dir", tmp), \
+                patch.dict(workflow.AGENT_RUNNERS, runners):
+            result = workflow.build_graph().invoke(
+                {"research_question": "q", "run_id": "stale-verdict"}, config={"recursion_limit": 80})
+
+        self.assertEqual(result["final_report"], "report v1")
+        self.assertEqual(result["node_status"]["quality_evaluation"], "excluded")
+        verdict = result["quality_verdict"]
+        self.assertFalse(verdict["evaluated"])  # v0 판정이 v1 판정처럼 남지 않음
+        self.assertEqual(verdict["failed_criteria"], ["quality_evaluation_unavailable"])
+        self.assertNotIn("revision", verdict)
+        self.assertEqual(result["next_nodes"], [])
+
+    def test_rework_and_revision_clear_previous_verdict(self) -> None:
+        status = {n: "done" for n in initial_control_state("t")["node_status"]}
+        stale = {"passed": False, "failed_criteria": ["neutrality"], "rework_targets": [], "feedback": "x"}
+        _, action, _, updates = decide(_state(node_status=status, quality_verdict=stale, final_report="r",
+                                              rework_counts={n: 9 for n in PERSPECTIVE_NODES}))
+        self.assertEqual(action, "revise_report")
+        self.assertIsNone(updates["quality_verdict"])
+        sufficient = {"evidence_items": [e for n in PERSPECTIVE_NODES for e in _evidence(n, 4, 2)],
+                      **{n: {"A": {}, "B": {}} for n in PERSPECTIVE_NODES}}
+        _, action, _, updates = decide(_state(node_status=status, final_report="r", **sufficient,
+                                              quality_verdict={**stale, "rework_targets": ["trl_evaluation"]}))
+        self.assertEqual(action, "rework_quality")
+        self.assertIsNone(updates["quality_verdict"])
+
+
 class CheckpointResumeTest(unittest.TestCase):
     def test_resume_after_interrupt_with_reopened_sqlite_checkpoint(self) -> None:
         calls: list[str] = []

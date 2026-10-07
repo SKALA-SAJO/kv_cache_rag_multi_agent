@@ -175,6 +175,14 @@ class _Decision:
         self.set_status([node], "excluded")
         return False
 
+    def invalidate_verdict(self) -> None:
+        """보고서가 다시 써지면 이전 보고서의 품질 verdict를 비운다 (하류 결과 무효화의 일부).
+
+        남겨 두면 새 보고서 평가가 실패해 종료될 때 이전 판정이 현재 보고서의 판정처럼 보인다.
+        """
+        if self.state.get("quality_verdict") is not None:
+            self.updates["quality_verdict"] = None
+
     def dispatch(self, nodes: list[str], action: str, reason: str) -> tuple[list[str], str, str]:
         self.set_status(nodes, "running")
         return nodes, action, reason
@@ -199,6 +207,7 @@ class _Decision:
             reason += f" — 기술 조사 후 {[PERSPECTIVE_NODES[n] for n in co_targets] or '없음'}만 재실행, {kept} 결과 유지"
             targets = [TECH_NODE]
         self.set_status(DOWNSTREAM_OF_PERSPECTIVES, "pending")
+        self.invalidate_verdict()
         self.updates["quality_feedback"] = ""
         return self.dispatch(targets, action, reason)
 
@@ -315,7 +324,11 @@ def _policy(d: _Decision, state: GraphState, step: int) -> tuple[list[str], str,
                 return d.dispatch([node], "retry_failed", f"{node} 실패 재시도")
             if node == REPORT_NODE or not state.get("final_report"):
                 return [], END_ACTION, f"{node} 반복 실패로 제외 — 종료"
-            return [], END_ACTION, "품질 평가 반복 실패 — 평가 없이 현재 보고서로 종료"
+            d.updates["quality_verdict"] = {
+                "passed": False, "evaluated": False, "failed_criteria": ["quality_evaluation_unavailable"],
+                "rework_targets": [], "feedback": state.get("errors", {}).get(QUALITY_NODE, ""),
+            }
+            return [], END_ACTION, "품질 평가 반복 실패 — 현재 보고서는 '평가 불가'로 표시하고 종료"
         if status in _NEEDS_RUN:
             if node == REPORT_NODE:
                 rev = state.get("report_revisions", 0)
@@ -358,6 +371,7 @@ def _policy(d: _Decision, state: GraphState, step: int) -> tuple[list[str], str,
         d.updates["report_revisions"] = revisions + 1
         d.updates["quality_feedback"] = verdict.get("feedback", "")
         d.set_status([QUALITY_NODE], "pending")
+        d.invalidate_verdict()
         return d.dispatch([REPORT_NODE], "revise_report", f"품질 미달({failed}) — 보고서 재작성 요청 ({revisions + 1}/{settings.max_report_revisions})")
 
     return [], END_ACTION, f"품질 미달({failed})이나 재작성 예산 소진 — 미달 사항을 verdict로 남기고 종료"
